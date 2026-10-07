@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using System.Collections.Concurrent;
+using ManiDispatch.Application.DTOs;
+using ManiDispatch.Application.UseCases;
 
 namespace Mani.Dispatch.Controllers;
 
@@ -9,6 +11,12 @@ public class DispatchController : ControllerBase
 {
     // Memoria atómica para demostrar exclusión concurrente (RNF-05)
     private static readonly ConcurrentDictionary<string, string> AcceptedRequests = new();
+    private readonly GetEligibleAlliesUseCase _getEligibleAlliesUseCase;
+
+    public DispatchController(GetEligibleAlliesUseCase getEligibleAlliesUseCase)
+    {
+        _getEligibleAlliesUseCase = getEligibleAlliesUseCase;
+    }
 
     [HttpGet("health")]
     public IActionResult HealthCheck()
@@ -23,46 +31,90 @@ public class DispatchController : ControllerBase
     }
 
     /// <summary>
-    /// Algoritmo de emparejamiento por cercanía geográfica (RF-12).
+    /// Algoritmo de emparejamiento por cercanía geográfica y elegibilidad por categoría y zona (RF-12, ADR-0011).
+    /// Arquitectura Limpia: delega en GetEligibleAlliesUseCase.
     /// </summary>
     [HttpPost("match")]
-    public IActionResult MatchProfessionals([FromBody] MatchRequestDto? request)
+    public async Task<IActionResult> MatchProfessionals([FromBody] MatchRequestDto? request)
     {
         var correlationId = Request.Headers["X-Correlation-ID"].ToString();
-
-        // Lista simulada de profesionales emparejados por cercanía
-        var matched = new[]
+        if (string.IsNullOrEmpty(correlationId))
         {
-            new { AllyId = "aliado-1", Name = "Carolina Gómez", DistanceKm = 1.2, EstimatedArrivalMinutes = 15 },
-            new { AllyId = "aliado-2", Name = "Paola Morales", DistanceKm = 2.5, EstimatedArrivalMinutes = 25 },
-            new { AllyId = "aliado-3", Name = "Sandra Rivas", DistanceKm = 4.1, EstimatedArrivalMinutes = 40 }
+            correlationId = $"disp-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+        }
+
+        var tenantId = Request.Headers["X-Tenant-Id"].ToString();
+        if (string.IsNullOrEmpty(tenantId))
+        {
+            tenantId = Request.Headers["X-Tenant-Slug"].ToString();
+        }
+        if (string.IsNullOrEmpty(tenantId))
+        {
+            tenantId = request?.TenantId ?? "default-tenant";
+        }
+
+        var safeRequest = request ?? new MatchRequestDto();
+        if (string.IsNullOrEmpty(safeRequest.TenantId))
+        {
+            safeRequest.TenantId = tenantId;
+        }
+
+        var result = await _getEligibleAlliesUseCase.ExecuteAsync(safeRequest, correlationId, tenantId);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Consulta de aliados válidos para una solicitud específica (RF-12, DD_V2 / SDD_V1).
+    /// </summary>
+    [HttpGet("requests/{requestId}/eligible-allies")]
+    public async Task<IActionResult> GetEligibleAlliesForRequest(
+        string requestId, 
+        [FromQuery] string? zonaId, 
+        [FromQuery] string? categoriaId, 
+        [FromQuery] int? page, 
+        [FromQuery] int? pageSize)
+    {
+        var correlationId = Request.Headers["X-Correlation-ID"].ToString();
+        if (string.IsNullOrEmpty(correlationId))
+        {
+            correlationId = $"disp-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+        }
+
+        var tenantId = Request.Headers["X-Tenant-Id"].ToString();
+        if (string.IsNullOrEmpty(tenantId))
+        {
+            tenantId = Request.Headers["X-Tenant-Slug"].ToString();
+        }
+        if (string.IsNullOrEmpty(tenantId))
+        {
+            tenantId = "default-tenant";
+        }
+
+        var requestDto = new MatchRequestDto
+        {
+            TenantId = tenantId,
+            ZonaId = zonaId,
+            CategoriaId = categoriaId,
+            Page = page,
+            PageSize = pageSize
         };
 
-        return Ok(new
-        {
-            service = "MANI-Dispatch-DotNet",
-            correlationId,
-            clientLocation = request?.Location ?? "Bogotá, Chapinero",
-            category = request?.Category ?? "Manicura Tradicional",
-            candidates = matched
-        });
+        var result = await _getEligibleAlliesUseCase.ExecuteAsync(requestDto, correlationId, tenantId);
+        return Ok(result);
     }
 
     /// <summary>
     /// Aceptación de servicio con exclusión concurrente atómica (RF-14 / RNF-05).
-    /// Si dos aliados aceptan al mismo tiempo, el primero gana (200 OK) y los demás reciben 409 Conflict.
     /// </summary>
     [HttpPost("requests/{requestId}/accept")]
     public IActionResult AcceptRequest(string requestId, [FromBody] AcceptRequestDto dto)
     {
         var correlationId = Request.Headers["X-Correlation-ID"].ToString();
 
-        // Intento de inserción atómica
         bool wonAssignment = AcceptedRequests.TryAdd(requestId, dto.AllyId);
 
         if (!wonAssignment)
         {
-            // Conflicto de exclusión concurrente: Ya fue asignada a otro profesional
             AcceptedRequests.TryGetValue(requestId, out var winningAllyId);
             return Conflict(new
             {
@@ -86,5 +138,4 @@ public class DispatchController : ControllerBase
     }
 }
 
-public record MatchRequestDto(string? Location, string? Category);
 public record AcceptRequestDto(string AllyId);
