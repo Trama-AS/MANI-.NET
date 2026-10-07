@@ -1,6 +1,7 @@
 using System.Text.Json;
 using ManiDispatch.Application.Interfaces;
 using ManiDispatch.Application.UseCases;
+using ManiDispatch.Infrastructure.Dispatch;
 using ManiDispatch.Infrastructure.Repositories;
 
 // Cargar variables de entorno si existe .env
@@ -25,7 +26,9 @@ builder.Services.AddCors(options =>
 
 // Inyección de dependencias para Arquitectura Limpia
 builder.Services.AddScoped<IAllyRepository, PostgresAllyRepository>();
+builder.Services.AddScoped<IDispatchPublisher, InMemoryDispatchPublisher>();
 builder.Services.AddScoped<GetEligibleAlliesUseCase>();
+builder.Services.AddScoped<OrchestrateDispatchUseCase>();
 
 var app = builder.Build();
 
