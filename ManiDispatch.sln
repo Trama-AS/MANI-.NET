@@ -1,0 +1,28 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ManiDispatch", "ManiDispatch.csproj", "{F716D8FF-847E-4A0D-AD87-554DFB88453C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ManiDispatch.Tests", "ManiDispatch.Tests\ManiDispatch.Tests.csproj", "{C9B981CE-D41B-4C84-8D7B-5CA15FD21AE9}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{F716D8FF-847E-4A0D-AD87-554DFB88453C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F716D8FF-847E-4A0D-AD87-554DFB88453C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F716D8FF-847E-4A0D-AD87-554DFB88453C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F716D8FF-847E-4A0D-AD87-554DFB88453C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C9B981CE-D41B-4C84-8D7B-5CA15FD21AE9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C9B981CE-D41B-4C84-8D7B-5CA15FD21AE9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C9B981CE-D41B-4C84-8D7B-5CA15FD21AE9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C9B981CE-D41B-4C84-8D7B-5CA15FD21AE9}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
