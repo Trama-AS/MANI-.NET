@@ -1,11 +1,11 @@
+using System;
+
 namespace ManiDispatch.Domain.Entities;
 
 public class Ally
 {
-    public string Id { get; set; } = string.Empty;
-    public string Nombre { get; set; } = string.Empty;
-    public string? Telefono { get; set; }
-    public decimal? CalificacionPromedio { get; set; }
-    public decimal? DistanceKm { get; set; }
-    public int? EstimatedArrivalMinutes { get; set; }
+    public Guid Id { get; set; }
+    public string NombreRazonSocial { get; set; } = string.Empty;
+    public string Tipo { get; set; } = string.Empty;
+    public string EstadoVerificacion { get; set; } = string.Empty;
 }

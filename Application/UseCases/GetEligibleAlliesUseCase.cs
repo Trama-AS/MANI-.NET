@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using System.Threading.Tasks;
 using ManiDispatch.Application.DTOs;
@@ -12,22 +13,39 @@ public class GetEligibleAlliesUseCase
 
     public GetEligibleAlliesUseCase(IAllyRepository allyRepository)
     {
-        _allyRepository = allyRepository;
+        _allyRepository = allyRepository ?? throw new ArgumentNullException(nameof(allyRepository));
     }
 
-    public async Task<MatchResponseDto> ExecuteAsync(MatchRequestDto request, string correlationId, string defaultTenantId = "default-tenant")
+    public async Task<MatchResponseDto> ExecuteAsync(
+        MatchRequestDto request, 
+        string correlationId, 
+        Guid tenantId, 
+        string? requestId = null)
     {
-        var tenantId = !string.IsNullOrWhiteSpace(request.TenantId) 
-            ? request.TenantId 
-            : defaultTenantId;
+        if (request == null)
+        {
+            throw new ArgumentNullException(nameof(request));
+        }
 
-        var zonaId = !string.IsNullOrWhiteSpace(request.ZonaId) 
-            ? request.ZonaId 
-            : (!string.IsNullOrWhiteSpace(request.Location) ? request.Location : "zona-default");
+        if (string.IsNullOrWhiteSpace(request.ZonaId))
+        {
+            throw new ArgumentException("El parámetro ZonaId es obligatorio para calcular cobertura (ADR-0011).", nameof(request.ZonaId));
+        }
 
-        var categoriaId = !string.IsNullOrWhiteSpace(request.CategoriaId) 
-            ? request.CategoriaId 
-            : (!string.IsNullOrWhiteSpace(request.Category) ? request.Category : "cat-default");
+        if (!Guid.TryParse(request.ZonaId, out var zonaGuid))
+        {
+            throw new ArgumentException($"El parámetro ZonaId '{request.ZonaId}' no es un UUID válido.", nameof(request.ZonaId));
+        }
+
+        if (string.IsNullOrWhiteSpace(request.CategoriaId))
+        {
+            throw new ArgumentException("El parámetro CategoriaId es obligatorio para filtrar por especialidad.", nameof(request.CategoriaId));
+        }
+
+        if (!Guid.TryParse(request.CategoriaId, out var categoriaGuid))
+        {
+            throw new ArgumentException($"El parámetro CategoriaId '{request.CategoriaId}' no es un UUID válido.", nameof(request.CategoriaId));
+        }
 
         int page = request.Page.HasValue && request.Page.Value > 0 ? request.Page.Value : 1;
         int pageSize = request.PageSize.HasValue && request.PageSize.Value > 0 ? request.PageSize.Value : 20;
@@ -35,8 +53,8 @@ public class GetEligibleAlliesUseCase
         var criteria = new MatchCriteria
         {
             TenantId = tenantId,
-            ZonaId = zonaId,
-            CategoriaId = categoriaId,
+            ZonaId = zonaGuid,
+            CategoriaId = categoriaGuid,
             Page = page,
             PageSize = pageSize
         };
@@ -45,25 +63,30 @@ public class GetEligibleAlliesUseCase
 
         var allyDtos = allies.Select(a => new AllyDto
         {
-            AllyId = a.Id,
-            Name = a.Nombre,
-            Phone = a.Telefono,
-            Rating = a.CalificacionPromedio,
-            DistanceKm = a.DistanceKm ?? 1.5m,
-            EstimatedArrivalMinutes = a.EstimatedArrivalMinutes ?? 20
-        });
+            AllyId = a.Id.ToString(),
+            NombreRazonSocial = a.NombreRazonSocial,
+            Tipo = a.Tipo,
+            EstadoVerificacion = a.EstadoVerificacion
+        }).ToList();
 
         return new MatchResponseDto
         {
-            Message = "Aliados válidos obtenidos con éxito por cobertura y categoría (RF-12).",
+            Message = "Aliados válidos obtenidos con éxito por cobertura y categoría (RF-12, ADR-0011).",
             CorrelationId = correlationId,
-            TenantId = tenantId,
-            ZonaId = zonaId,
-            CategoriaId = categoriaId,
+            TenantId = tenantId.ToString(),
+            RequestId = requestId,
+            ZonaId = request.ZonaId,
+            CategoriaId = request.CategoriaId,
             Page = page,
             PageSize = pageSize,
             TotalCount = totalCount,
-            MatchedAllies = allyDtos
+            MatchedAllies = allyDtos,
+            Timestamp = DateTime.UtcNow
         };
+    }
+
+    public async Task<SolicitudContext?> GetSolicitudContextAsync(Guid requestId, Guid tenantId)
+    {
+        return await _allyRepository.GetSolicitudContextAsync(requestId, tenantId);
     }
 }

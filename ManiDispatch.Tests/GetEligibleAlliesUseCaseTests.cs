@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -25,10 +26,26 @@ public class GetEligibleAlliesUseCaseTests
     public async Task ExecuteAsync_ShouldReturnEligibleAllies_WhenCriteriaMatches()
     {
         // Arrange
+        var tenantId = Guid.NewGuid();
+        var zonaId = Guid.NewGuid();
+        var categoriaId = Guid.NewGuid();
+
         var testAllies = new List<Ally>
         {
-            new() { Id = "ally-1", Nombre = "Laura Mendoza", Telefono = "+57 300 000 0001", CalificacionPromedio = 4.9m },
-            new() { Id = "ally-2", Nombre = "Diana Castro", Telefono = "+57 300 000 0002", CalificacionPromedio = 4.7m }
+            new()
+            {
+                Id = Guid.NewGuid(),
+                NombreRazonSocial = "Laura Mendoza S.A.S.",
+                Tipo = "empresa",
+                EstadoVerificacion = "aprobado"
+            },
+            new()
+            {
+                Id = Guid.NewGuid(),
+                NombreRazonSocial = "Diana Castro",
+                Tipo = "independiente",
+                EstadoVerificacion = "VERIFICADO"
+            }
         };
 
         _mockRepo.Setup(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()))
@@ -36,57 +53,84 @@ public class GetEligibleAlliesUseCaseTests
 
         var request = new MatchRequestDto
         {
-            TenantId = "tenant-alpha",
-            ZonaId = "zona-chapinero",
-            CategoriaId = "cat-manicura",
+            TenantId = tenantId.ToString(),
+            ZonaId = zonaId.ToString(),
+            CategoriaId = categoriaId.ToString(),
             Page = 1,
             PageSize = 10
         };
 
         // Act
-        var result = await _useCase.ExecuteAsync(request, "corr-12345", "tenant-alpha");
+        var result = await _useCase.ExecuteAsync(request, "corr-12345", tenantId);
 
         // Assert
         Assert.NotNull(result);
         Assert.Equal("corr-12345", result.CorrelationId);
-        Assert.Equal("tenant-alpha", result.TenantId);
-        Assert.Equal("zona-chapinero", result.ZonaId);
-        Assert.Equal("cat-manicura", result.CategoriaId);
+        Assert.Equal(tenantId.ToString(), result.TenantId);
+        Assert.Equal(zonaId.ToString(), result.ZonaId);
+        Assert.Equal(categoriaId.ToString(), result.CategoriaId);
         Assert.Equal(2, result.TotalCount);
         Assert.Equal(2, result.MatchedAllies.Count());
-        Assert.Equal("Laura Mendoza", result.MatchedAllies.First().Name);
+        Assert.Equal("Laura Mendoza S.A.S.", result.MatchedAllies.First().NombreRazonSocial);
+        Assert.Equal("empresa", result.MatchedAllies.First().Tipo);
 
-        _mockRepo.Verify(r => r.GetEligibleAlliesAsync(It.Is<MatchCriteria>(c => 
-            c.TenantId == "tenant-alpha" && 
-            c.ZonaId == "zona-chapinero" && 
-            c.CategoriaId == "cat-manicura" && 
-            c.Page == 1 && 
+        _mockRepo.Verify(r => r.GetEligibleAlliesAsync(It.Is<MatchCriteria>(c =>
+            c.TenantId == tenantId &&
+            c.ZonaId == zonaId &&
+            c.CategoriaId == categoriaId &&
+            c.Page == 1 &&
             c.PageSize == 10
         )), Times.Once);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ShouldFallbackToDefaultTenant_WhenTenantIdNotProvided()
+    public async Task ExecuteAsync_ThrowsArgumentException_WhenZonaIdIsNotValidGuid()
     {
-        // Arrange
-        _mockRepo.Setup(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()))
-                 .ReturnsAsync((new List<Ally>(), 0));
-
         var request = new MatchRequestDto
         {
-            TenantId = null,
-            Location = "zona-usaquen",
-            Category = "cat-pedicura"
+            ZonaId = "invalid-zona-uuid",
+            CategoriaId = Guid.NewGuid().ToString()
         };
 
-        // Act
-        var result = await _useCase.ExecuteAsync(request, "corr-default", "fallback-tenant");
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            _useCase.ExecuteAsync(request, "corr-1", Guid.NewGuid()));
+    }
 
-        // Assert
-        Assert.Equal("fallback-tenant", result.TenantId);
-        Assert.Equal("zona-usaquen", result.ZonaId);
-        Assert.Equal("cat-pedicura", result.CategoriaId);
-        Assert.Equal(1, result.Page);
-        Assert.Equal(20, result.PageSize);
+    [Fact]
+    public async Task ExecuteAsync_ThrowsArgumentException_WhenCategoriaIdIsNotValidGuid()
+    {
+        var request = new MatchRequestDto
+        {
+            ZonaId = Guid.NewGuid().ToString(),
+            CategoriaId = "invalid-cat-uuid"
+        };
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            _useCase.ExecuteAsync(request, "corr-2", Guid.NewGuid()));
+    }
+
+    [Fact]
+    public async Task GetSolicitudContextAsync_DelegatesToRepository()
+    {
+        var reqId = Guid.NewGuid();
+        var tenId = Guid.NewGuid();
+        var expected = new SolicitudContext
+        {
+            Id = reqId,
+            TenantId = tenId,
+            ZonaId = Guid.NewGuid(),
+            CategoriaId = Guid.NewGuid(),
+            Estado = "PENDIENTE"
+        };
+
+        _mockRepo.Setup(r => r.GetSolicitudContextAsync(reqId, tenId))
+                 .ReturnsAsync(expected);
+
+        var actual = await _useCase.GetSolicitudContextAsync(reqId, tenId);
+
+        Assert.NotNull(actual);
+        Assert.Equal(reqId, actual.Id);
+        Assert.Equal(tenId, actual.TenantId);
+        Assert.Equal("PENDIENTE", actual.Estado);
     }
 }

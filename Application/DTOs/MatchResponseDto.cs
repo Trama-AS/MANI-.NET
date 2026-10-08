@@ -6,11 +6,16 @@ namespace ManiDispatch.Application.DTOs;
 public class AllyDto
 {
     public string AllyId { get; set; } = string.Empty;
-    public string Name { get; set; } = string.Empty;
-    public string? Phone { get; set; }
-    public decimal? Rating { get; set; }
-    public decimal? DistanceKm { get; set; }
-    public int? EstimatedArrivalMinutes { get; set; }
+    public string NombreRazonSocial { get; set; } = string.Empty;
+    public string Tipo { get; set; } = string.Empty;
+    public string EstadoVerificacion { get; set; } = string.Empty;
+
+    // Backward compatibility property for existing consumers
+    public string Name
+    {
+        get => NombreRazonSocial;
+        set => NombreRazonSocial = value;
+    }
 }
 
 public class MatchResponseDto
@@ -18,6 +23,7 @@ public class MatchResponseDto
     public string Message { get; set; } = string.Empty;
     public string CorrelationId { get; set; } = string.Empty;
     public string TenantId { get; set; } = string.Empty;
+    public string? RequestId { get; set; }
     public string ZonaId { get; set; } = string.Empty;
     public string CategoriaId { get; set; } = string.Empty;
     public int Page { get; set; }

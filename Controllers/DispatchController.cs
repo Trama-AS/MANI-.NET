@@ -1,12 +1,17 @@
-using Microsoft.AspNetCore.Mvc;
+using System;
 using System.Collections.Concurrent;
+using System.Threading.Tasks;
 using ManiDispatch.Application.DTOs;
 using ManiDispatch.Application.UseCases;
+using ManiDispatch.Infrastructure.Auth;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 
 namespace Mani.Dispatch.Controllers;
 
 [ApiController]
 [Route("api/v1/dispatch")]
+[Route("")]
 public class DispatchController : ControllerBase
 {
     // Memoria atómica para demostrar exclusión concurrente (RNF-05)
@@ -15,7 +20,7 @@ public class DispatchController : ControllerBase
 
     public DispatchController(GetEligibleAlliesUseCase getEligibleAlliesUseCase)
     {
-        _getEligibleAlliesUseCase = getEligibleAlliesUseCase;
+        _getEligibleAlliesUseCase = getEligibleAlliesUseCase ?? throw new ArgumentNullException(nameof(getEligibleAlliesUseCase));
     }
 
     [HttpGet("health")]
@@ -26,81 +31,152 @@ public class DispatchController : ControllerBase
             status = "UP",
             service = "MANI-Dispatch-DotNet",
             timestamp = DateTime.UtcNow.ToString("o"),
-            correlationId = Request.Headers["X-Correlation-ID"].ToString()
+            correlationId = GetOrCreateCorrelationId()
         });
     }
 
     /// <summary>
-    /// Algoritmo de emparejamiento por cercanía geográfica y elegibilidad por categoría y zona (RF-12, ADR-0011).
-    /// Arquitectura Limpia: delega en GetEligibleAlliesUseCase.
+    /// Algoritmo de emparejamiento por elegibilidad de categoría y zona geográfica (RF-12, ADR-0011).
+    /// Requiere token JWT verificado para resolver el tenant (ADR-0018).
     /// </summary>
     [HttpPost("match")]
     public async Task<IActionResult> MatchProfessionals([FromBody] MatchRequestDto? request)
     {
-        var correlationId = Request.Headers["X-Correlation-ID"].ToString();
-        if (string.IsNullOrEmpty(correlationId))
+        var correlationId = GetOrCreateCorrelationId();
+
+        var authResult = JwtAuthHelper.Authenticate(Request.Headers.Authorization);
+        if (!authResult.IsAuthenticated)
         {
-            correlationId = $"disp-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+            return Unauthorized(new
+            {
+                error = authResult.ErrorMessage,
+                status = StatusCodes.Status401Unauthorized,
+                correlationId,
+                timestamp = DateTime.UtcNow.ToString("o")
+            });
         }
 
-        var tenantId = Request.Headers["X-Tenant-Id"].ToString();
-        if (string.IsNullOrEmpty(tenantId))
+        var tenantId = authResult.TenantId!.Value;
+
+        if (request != null && !string.IsNullOrWhiteSpace(request.TenantId))
         {
-            tenantId = Request.Headers["X-Tenant-Slug"].ToString();
-        }
-        if (string.IsNullOrEmpty(tenantId))
-        {
-            tenantId = request?.TenantId ?? "default-tenant";
+            if (Guid.TryParse(request.TenantId, out var requestedTenantGuid) && requestedTenantGuid != tenantId)
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new
+                {
+                    error = "Aislamiento cross-tenant violado: el tenant solicitado no coincide con la sesión autenticada (ADR-0018).",
+                    status = StatusCodes.Status403Forbidden,
+                    correlationId,
+                    timestamp = DateTime.UtcNow.ToString("o")
+                });
+            }
         }
 
         var safeRequest = request ?? new MatchRequestDto();
-        if (string.IsNullOrEmpty(safeRequest.TenantId))
-        {
-            safeRequest.TenantId = tenantId;
-        }
 
-        var result = await _getEligibleAlliesUseCase.ExecuteAsync(safeRequest, correlationId, tenantId);
-        return Ok(result);
+        try
+        {
+            var result = await _getEligibleAlliesUseCase.ExecuteAsync(safeRequest, correlationId, tenantId, safeRequest.RequestId);
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new
+            {
+                error = ex.Message,
+                status = StatusCodes.Status400BadRequest,
+                correlationId,
+                timestamp = DateTime.UtcNow.ToString("o")
+            });
+        }
     }
 
     /// <summary>
-    /// Consulta de aliados válidos para una solicitud específica (RF-12, DD_V2 / SDD_V1).
+    /// Consulta de aliados válidos para una solicitud específica (RF-12, ADR-0011).
+    /// Si zonaId o categoriaId no vienen en la consulta, se resuelven automáticamente de la solicitud en base de datos.
     /// </summary>
     [HttpGet("requests/{requestId}/eligible-allies")]
     public async Task<IActionResult> GetEligibleAlliesForRequest(
-        string requestId, 
-        [FromQuery] string? zonaId, 
-        [FromQuery] string? categoriaId, 
-        [FromQuery] int? page, 
+        string requestId,
+        [FromQuery] string? zonaId,
+        [FromQuery] string? categoriaId,
+        [FromQuery] int? page,
         [FromQuery] int? pageSize)
     {
-        var correlationId = Request.Headers["X-Correlation-ID"].ToString();
-        if (string.IsNullOrEmpty(correlationId))
+        var correlationId = GetOrCreateCorrelationId();
+
+        var authResult = JwtAuthHelper.Authenticate(Request.Headers.Authorization);
+        if (!authResult.IsAuthenticated)
         {
-            correlationId = $"disp-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+            return Unauthorized(new
+            {
+                error = authResult.ErrorMessage,
+                status = StatusCodes.Status401Unauthorized,
+                correlationId,
+                timestamp = DateTime.UtcNow.ToString("o")
+            });
         }
 
-        var tenantId = Request.Headers["X-Tenant-Id"].ToString();
-        if (string.IsNullOrEmpty(tenantId))
+        var tenantId = authResult.TenantId!.Value;
+
+        if (!Guid.TryParse(requestId, out var requestGuid))
         {
-            tenantId = Request.Headers["X-Tenant-Slug"].ToString();
+            return BadRequest(new
+            {
+                error = $"El requestId '{requestId}' no es un UUID válido.",
+                status = StatusCodes.Status400BadRequest,
+                correlationId,
+                timestamp = DateTime.UtcNow.ToString("o")
+            });
         }
-        if (string.IsNullOrEmpty(tenantId))
+
+        string resolvedZonaId = zonaId ?? string.Empty;
+        string resolvedCategoriaId = categoriaId ?? string.Empty;
+
+        // Si zona o categoría no vienen en query params, se consulta la solicitud real del tenant
+        if (string.IsNullOrWhiteSpace(resolvedZonaId) || string.IsNullOrWhiteSpace(resolvedCategoriaId))
         {
-            tenantId = "default-tenant";
+            var solicitud = await _getEligibleAlliesUseCase.GetSolicitudContextAsync(requestGuid, tenantId);
+            if (solicitud == null)
+            {
+                return NotFound(new
+                {
+                    error = $"Solicitud con ID '{requestId}' no encontrada para el tenant autenticado.",
+                    status = StatusCodes.Status404NotFound,
+                    correlationId,
+                    timestamp = DateTime.UtcNow.ToString("o")
+                });
+            }
+
+            resolvedZonaId = solicitud.ZonaId.ToString();
+            resolvedCategoriaId = solicitud.CategoriaId.ToString();
         }
 
         var requestDto = new MatchRequestDto
         {
-            TenantId = tenantId,
-            ZonaId = zonaId,
-            CategoriaId = categoriaId,
+            TenantId = tenantId.ToString(),
+            RequestId = requestId,
+            ZonaId = resolvedZonaId,
+            CategoriaId = resolvedCategoriaId,
             Page = page,
             PageSize = pageSize
         };
 
-        var result = await _getEligibleAlliesUseCase.ExecuteAsync(requestDto, correlationId, tenantId);
-        return Ok(result);
+        try
+        {
+            var result = await _getEligibleAlliesUseCase.ExecuteAsync(requestDto, correlationId, tenantId, requestId);
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new
+            {
+                error = ex.Message,
+                status = StatusCodes.Status400BadRequest,
+                correlationId,
+                timestamp = DateTime.UtcNow.ToString("o")
+            });
+        }
     }
 
     /// <summary>
@@ -109,7 +185,18 @@ public class DispatchController : ControllerBase
     [HttpPost("requests/{requestId}/accept")]
     public IActionResult AcceptRequest(string requestId, [FromBody] AcceptRequestDto dto)
     {
-        var correlationId = Request.Headers["X-Correlation-ID"].ToString();
+        var correlationId = GetOrCreateCorrelationId();
+
+        if (dto == null || string.IsNullOrWhiteSpace(dto.AllyId))
+        {
+            return BadRequest(new
+            {
+                error = "El identificador del aliado (AllyId) es obligatorio.",
+                status = StatusCodes.Status400BadRequest,
+                correlationId,
+                timestamp = DateTime.UtcNow.ToString("o")
+            });
+        }
 
         bool wonAssignment = AcceptedRequests.TryAdd(requestId, dto.AllyId);
 
@@ -119,7 +206,7 @@ public class DispatchController : ControllerBase
             return Conflict(new
             {
                 error = "La solicitud ya fue aceptada por otro profesional.",
-                status = 409,
+                status = StatusCodes.Status409Conflict,
                 correlationId,
                 assignedTo = winningAllyId,
                 timestamp = DateTime.UtcNow.ToString("o")
@@ -135,6 +222,16 @@ public class DispatchController : ControllerBase
             correlationId,
             timestamp = DateTime.UtcNow.ToString("o")
         });
+    }
+
+    private string GetOrCreateCorrelationId()
+    {
+        var correlationId = Request.Headers["X-Correlation-ID"].ToString();
+        if (string.IsNullOrWhiteSpace(correlationId))
+        {
+            correlationId = $"disp-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+        }
+        return correlationId;
     }
 }
 

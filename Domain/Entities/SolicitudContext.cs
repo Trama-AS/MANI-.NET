@@ -2,11 +2,11 @@ using System;
 
 namespace ManiDispatch.Domain.Entities;
 
-public class MatchCriteria
+public class SolicitudContext
 {
+    public Guid Id { get; set; }
     public Guid TenantId { get; set; }
     public Guid ZonaId { get; set; }
     public Guid CategoriaId { get; set; }
-    public int Page { get; set; } = 1;
-    public int PageSize { get; set; } = 20;
+    public string Estado { get; set; } = string.Empty;
 }
