@@ -45,7 +45,11 @@ public class PostgresAllyRepository : IAllyRepository
                 WHERE a.tenant_id = @TenantId
                   AND ca.zona_id = @ZonaId
                   AND ac.categoria_id = @CategoriaId
-                  AND (a.estado_verificacion = 'VERIFICADO' OR a.estado_verificacion = 'aprobado');";
+                  AND (a.estado_verificacion = 'VERIFICADO' OR a.estado_verificacion = 'aprobado')
+                  AND (@RequestId IS NULL OR NOT EXISTS (
+                      SELECT 1 FROM solicitud_rechazo r
+                      WHERE r.solicitud_id = @RequestId AND r.aliado_id = a.id
+                  ));";
 
             const string selectSql = @"
                 SELECT DISTINCT 
@@ -60,6 +64,10 @@ public class PostgresAllyRepository : IAllyRepository
                   AND ca.zona_id = @ZonaId
                   AND ac.categoria_id = @CategoriaId
                   AND (a.estado_verificacion = 'VERIFICADO' OR a.estado_verificacion = 'aprobado')
+                  AND (@RequestId IS NULL OR NOT EXISTS (
+                      SELECT 1 FROM solicitud_rechazo r
+                      WHERE r.solicitud_id = @RequestId AND r.aliado_id = a.id
+                  ))
                 ORDER BY a.nombre_razon_social ASC
                 OFFSET @Offset LIMIT @Limit;";
 
@@ -69,6 +77,7 @@ public class PostgresAllyRepository : IAllyRepository
             var parameters = new
             {
                 TenantId = criteria.TenantId,
+                RequestId = criteria.RequestId,
                 ZonaId = criteria.ZonaId,
                 CategoriaId = criteria.CategoriaId,
                 Offset = offset,

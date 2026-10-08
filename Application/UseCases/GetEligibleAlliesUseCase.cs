@@ -50,9 +50,16 @@ public class GetEligibleAlliesUseCase
         int page = request.Page.HasValue && request.Page.Value > 0 ? request.Page.Value : 1;
         int pageSize = request.PageSize.HasValue && request.PageSize.Value > 0 ? request.PageSize.Value : 20;
 
+        Guid? parsedRequestId = null;
+        if (!string.IsNullOrWhiteSpace(requestId) && Guid.TryParse(requestId, out var reqGuid))
+        {
+            parsedRequestId = reqGuid;
+        }
+
         var criteria = new MatchCriteria
         {
             TenantId = tenantId,
+            RequestId = parsedRequestId,
             ZonaId = zonaGuid,
             CategoriaId = categoriaGuid,
             Page = page,

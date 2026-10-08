@@ -1,6 +1,9 @@
 using System;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
+using Microsoft.IdentityModel.Tokens;
 
 namespace ManiDispatch.Infrastructure.Auth;
 
@@ -8,7 +11,9 @@ public record AuthResult(bool IsAuthenticated, Guid? TenantId, string? UserId, s
 
 public static class JwtAuthHelper
 {
-    public static AuthResult Authenticate(string? authHeader)
+    private static readonly JwtSecurityTokenHandler TokenHandler = new();
+
+    public static AuthResult Authenticate(string? authHeader, string? explicitJwtSecret = null)
     {
         if (string.IsNullOrWhiteSpace(authHeader))
         {
@@ -21,48 +26,92 @@ public static class JwtAuthHelper
         }
 
         var token = authHeader.Substring("Bearer ".Length).Trim();
-        var parts = token.Split('.');
-        if (parts.Length < 2)
+        if (string.IsNullOrWhiteSpace(token))
         {
-            return new AuthResult(false, null, null, null, "Formato de token JWT inválido.");
+            return new AuthResult(false, null, null, null, "Token de autenticación vacío.");
         }
 
         try
         {
-            var payloadJson = DecodeBase64Url(parts[1]);
-            using var doc = JsonDocument.Parse(payloadJson);
-            var root = doc.RootElement;
+            var jwtSecret = explicitJwtSecret ?? Environment.GetEnvironmentVariable("SUPABASE_JWT_SECRET");
 
+            ClaimsPrincipal principal;
+            JwtSecurityToken jwtToken;
+
+            if (!string.IsNullOrEmpty(jwtSecret))
+            {
+                var validationParameters = new TokenValidationParameters
+                {
+                    ValidateIssuerSigningKey = true,
+                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
+                    ValidateIssuer = false,
+                    ValidateAudience = false,
+                    ValidateLifetime = true,
+                    ClockSkew = TimeSpan.FromMinutes(5)
+                };
+
+                principal = TokenHandler.ValidateToken(token, validationParameters, out var validatedToken);
+                jwtToken = (JwtSecurityToken)validatedToken;
+            }
+            else
+            {
+                // Fallback para entornos de desarrollo/test donde no se configure SUPABASE_JWT_SECRET
+                if (!TokenHandler.CanReadToken(token))
+                {
+                    return new AuthResult(false, null, null, null, "Formato de token JWT inválido.");
+                }
+
+                jwtToken = TokenHandler.ReadJwtToken(token);
+                if (jwtToken.ValidTo != DateTime.MinValue && jwtToken.ValidTo < DateTime.UtcNow)
+                {
+                    return new AuthResult(false, null, null, null, "El token ha expirado.");
+                }
+
+                var identity = new ClaimsIdentity(jwtToken.Claims, "jwt");
+                principal = new ClaimsPrincipal(identity);
+            }
+
+            string? userId = jwtToken.Subject ?? principal.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             string? tenantIdStr = null;
-            string? userId = null;
             string? role = null;
 
-            if (root.TryGetProperty("sub", out var subProp))
+            // En Supabase Auth, los claims de negocio están estrictamente en app_metadata (ADR-0018).
+            // La raíz contiene role: "authenticated", el cual DEBE ignorarse.
+            var appMetadataClaim = jwtToken.Claims.FirstOrDefault(c => c.Type == "app_metadata");
+            if (appMetadataClaim != null && !string.IsNullOrWhiteSpace(appMetadataClaim.Value))
             {
-                userId = subProp.GetString();
+                try
+                {
+                    using var doc = JsonDocument.Parse(appMetadataClaim.Value);
+                    var root = doc.RootElement;
+                    if (root.TryGetProperty("tenant_id", out var tenantProp))
+                    {
+                        tenantIdStr = tenantProp.GetString();
+                    }
+                    if (root.TryGetProperty("user_role", out var userRoleProp))
+                    {
+                        role = userRoleProp.GetString();
+                    }
+                    else if (root.TryGetProperty("role", out var roleProp))
+                    {
+                        role = roleProp.GetString();
+                    }
+                }
+                catch
+                {
+                    // Ignora fallo de deserialización de json en claim
+                }
             }
 
-            // Supabase Auth coloca los claims en app_metadata (ADR-0018)
-            if (root.TryGetProperty("app_metadata", out var appMetadata) && appMetadata.ValueKind == JsonValueKind.Object)
+            // Fallback para claims planos emitidos por otros middlewares
+            if (string.IsNullOrWhiteSpace(tenantIdStr))
             {
-                if (appMetadata.TryGetProperty("tenant_id", out var tenantProp))
-                {
-                    tenantIdStr = tenantProp.GetString();
-                }
-                if (appMetadata.TryGetProperty("user_role", out var roleProp))
-                {
-                    role = roleProp.GetString();
-                }
+                tenantIdStr = jwtToken.Claims.FirstOrDefault(c => c.Type == "tenant_id" || c.Type == "tenantId")?.Value;
             }
 
-            // Fallback para claims en la raíz si no estuvieran bajo app_metadata
-            if (string.IsNullOrWhiteSpace(tenantIdStr) && root.TryGetProperty("tenant_id", out var rootTenantProp))
+            if (string.IsNullOrWhiteSpace(role))
             {
-                tenantIdStr = rootTenantProp.GetString();
-            }
-            if (string.IsNullOrWhiteSpace(role) && root.TryGetProperty("role", out var rootRoleProp))
-            {
-                role = rootRoleProp.GetString();
+                role = jwtToken.Claims.FirstOrDefault(c => c.Type == "user_role")?.Value;
             }
 
             if (string.IsNullOrWhiteSpace(tenantIdStr))
@@ -77,48 +126,17 @@ public static class JwtAuthHelper
 
             return new AuthResult(true, tenantGuid, userId, role, null);
         }
+        catch (SecurityTokenExpiredException)
+        {
+            return new AuthResult(false, null, null, null, "El token ha expirado.");
+        }
+        catch (SecurityTokenInvalidSignatureException)
+        {
+            return new AuthResult(false, null, null, null, "Firma del token JWT inválida.");
+        }
         catch (Exception ex)
         {
-            return new AuthResult(false, null, null, null, $"Error al procesar el token de autenticación: {ex.Message}");
+            return new AuthResult(false, null, null, null, $"Error al validar el token de autenticación: {ex.Message}");
         }
-    }
-
-    public static string CreateTestToken(Guid tenantId, string userId = "test-user-id", string role = "cliente")
-    {
-        var header = EncodeBase64Url(JsonSerializer.Serialize(new { alg = "HS256", typ = "JWT" }));
-        var payload = EncodeBase64Url(JsonSerializer.Serialize(new
-        {
-            sub = userId,
-            app_metadata = new
-            {
-                tenant_id = tenantId.ToString(),
-                user_role = role
-            },
-            exp = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds()
-        }));
-        var signature = EncodeBase64Url("mock-signature");
-
-        return $"{header}.{payload}.{signature}";
-    }
-
-    private static string DecodeBase64Url(string base64Url)
-    {
-        string padded = base64Url.Replace('-', '+').Replace('_', '/');
-        switch (padded.Length % 4)
-        {
-            case 2: padded += "=="; break;
-            case 3: padded += "="; break;
-        }
-        var bytes = Convert.FromBase64String(padded);
-        return Encoding.UTF8.GetString(bytes);
-    }
-
-    private static string EncodeBase64Url(string text)
-    {
-        var bytes = Encoding.UTF8.GetBytes(text);
-        return Convert.ToBase64String(bytes)
-            .TrimEnd('=')
-            .Replace('+', '-')
-            .Replace('/', '_');
     }
 }

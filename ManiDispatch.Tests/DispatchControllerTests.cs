@@ -7,6 +7,7 @@ using ManiDispatch.Application.Interfaces;
 using ManiDispatch.Application.UseCases;
 using ManiDispatch.Domain.Entities;
 using ManiDispatch.Infrastructure.Auth;
+using ManiDispatch.Tests.Helpers;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
@@ -25,7 +26,7 @@ public class DispatchControllerTests
     public DispatchControllerTests()
     {
         _testTenantId = Guid.NewGuid();
-        _validJwtToken = JwtAuthHelper.CreateTestToken(_testTenantId, "user-client-1", "cliente");
+        _validJwtToken = TestTokenHelper.CreateTestToken(_testTenantId, "user-client-1", "cliente");
 
         _mockRepo = new Mock<IAllyRepository>();
         _useCase = new GetEligibleAlliesUseCase(_mockRepo.Object);
