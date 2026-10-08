@@ -27,8 +27,11 @@ builder.Services.AddCors(options =>
 // Inyección de dependencias para Arquitectura Limpia
 builder.Services.AddScoped<IAllyRepository, PostgresAllyRepository>();
 builder.Services.AddScoped<IDispatchPublisher, PostgresDispatchPublisher>();
+builder.Services.AddScoped<ISolicitudAssignmentRepository, PostgresSolicitudAssignmentRepository>();
 builder.Services.AddScoped<GetEligibleAlliesUseCase>();
 builder.Services.AddScoped<OrchestrateDispatchUseCase>();
+builder.Services.AddScoped<AcceptDispatchOfferUseCase>();
+builder.Services.AddScoped<RejectDispatchOfferUseCase>();
 
 var app = builder.Build();
 

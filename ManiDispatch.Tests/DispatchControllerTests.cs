@@ -7,6 +7,7 @@ using ManiDispatch.Application.Interfaces;
 using ManiDispatch.Application.UseCases;
 using ManiDispatch.Domain.Entities;
 using ManiDispatch.Infrastructure.Auth;
+using ManiDispatch.Infrastructure.Repositories;
 using ManiDispatch.Tests.Helpers;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -19,8 +20,11 @@ public class DispatchControllerTests
 {
     private readonly Mock<IAllyRepository> _mockRepo;
     private readonly Mock<IDispatchPublisher> _mockPublisher;
+    private readonly ISolicitudAssignmentRepository _assignmentRepo;
     private readonly GetEligibleAlliesUseCase _getEligibleUseCase;
     private readonly OrchestrateDispatchUseCase _orchestrateUseCase;
+    private readonly AcceptDispatchOfferUseCase _acceptUseCase;
+    private readonly RejectDispatchOfferUseCase _rejectUseCase;
     private readonly DispatchController _controller;
     private readonly Guid _testTenantId;
     private readonly string _validJwtToken;
@@ -32,10 +36,15 @@ public class DispatchControllerTests
 
         _mockRepo = new Mock<IAllyRepository>();
         _mockPublisher = new Mock<IDispatchPublisher>();
+        var mockConfig = new Mock<Microsoft.Extensions.Configuration.IConfiguration>();
+        _assignmentRepo = new PostgresSolicitudAssignmentRepository(mockConfig.Object, Microsoft.Extensions.Logging.Abstractions.NullLogger<PostgresSolicitudAssignmentRepository>.Instance);
+
         _getEligibleUseCase = new GetEligibleAlliesUseCase(_mockRepo.Object);
         _orchestrateUseCase = new OrchestrateDispatchUseCase(_mockRepo.Object, _mockPublisher.Object);
+        _acceptUseCase = new AcceptDispatchOfferUseCase(_assignmentRepo);
+        _rejectUseCase = new RejectDispatchOfferUseCase(_assignmentRepo);
 
-        _controller = new DispatchController(_getEligibleUseCase, _orchestrateUseCase)
+        _controller = new DispatchController(_getEligibleUseCase, _orchestrateUseCase, _acceptUseCase, _rejectUseCase)
         {
             ControllerContext = new ControllerContext
             {
@@ -261,17 +270,49 @@ public class DispatchControllerTests
     }
 
     [Fact]
-    public void AcceptRequest_ReturnsOkOnFirst_AndConflictOnSecond()
+    public async Task AcceptRequest_ReturnsOkOnFirst_ConflictOnSecond_AndOkOnWinnerRetry()
     {
-        string reqId = "req-unique-" + Guid.NewGuid();
-        var dto1 = new AcceptRequestDto("ally-first");
-        var dto2 = new AcceptRequestDto("ally-second");
+        string reqId = Guid.NewGuid().ToString();
+        var ally1UserId = Guid.NewGuid();
+        var ally2UserId = Guid.NewGuid();
 
-        var result1 = _controller.AcceptRequest(reqId, dto1);
-        var result2 = _controller.AcceptRequest(reqId, dto2);
+        var ally1Token = TestTokenHelper.CreateTestToken(_testTenantId, ally1UserId.ToString(), "aliado");
+        var ally2Token = TestTokenHelper.CreateTestToken(_testTenantId, ally2UserId.ToString(), "aliado");
 
-        Assert.IsType<OkObjectResult>(result1);
+        // Act 1: Primer aliado acepta con su token
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {ally1Token}";
+        var result1 = await _controller.AcceptRequest(reqId, new AcceptRequestDto(null));
+
+        // Act 2: Segundo aliado colisiona con token distinto
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {ally2Token}";
+        var result2 = await _controller.AcceptRequest(reqId, new AcceptRequestDto(null));
+
+        // Act 3: Primer aliado reintenta (idempotente)
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {ally1Token}";
+        var result3 = await _controller.AcceptRequest(reqId, new AcceptRequestDto(null));
+
+        // Assert
+        var okResult1 = Assert.IsType<OkObjectResult>(result1);
+        Assert.Equal(200, okResult1.StatusCode);
+
         var conflictResult = Assert.IsType<ConflictObjectResult>(result2);
         Assert.Equal(409, conflictResult.StatusCode);
+
+        var okResult3 = Assert.IsType<OkObjectResult>(result3);
+        Assert.Equal(200, okResult3.StatusCode);
+    }
+
+    [Fact]
+    public async Task RejectRequest_WithAuthenticatedAlly_ReturnsOkRejected()
+    {
+        string reqId = Guid.NewGuid().ToString();
+        var allyUserId = Guid.NewGuid();
+        var allyToken = TestTokenHelper.CreateTestToken(_testTenantId, allyUserId.ToString(), "aliado");
+
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {allyToken}";
+        var result = await _controller.RejectRequest(reqId, new RejectRequestDto("HORARIO_INCOMPATIBLE"));
+
+        var okResult = Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(200, okResult.StatusCode);
     }
 }

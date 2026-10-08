@@ -1,8 +1,7 @@
 using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Threading.Tasks;
 using ManiDispatch.Application.DTOs;
+using ManiDispatch.Application.Interfaces;
 using ManiDispatch.Application.UseCases;
 using ManiDispatch.Infrastructure.Auth;
 using Microsoft.AspNetCore.Http;
@@ -15,17 +14,21 @@ namespace Mani.Dispatch.Controllers;
 [Route("")]
 public class DispatchController : ControllerBase
 {
-    // Memoria atómica para demostrar exclusión concurrente (RNF-05)
-    private static readonly ConcurrentDictionary<string, string> AcceptedRequests = new();
     private readonly GetEligibleAlliesUseCase _getEligibleAlliesUseCase;
     private readonly OrchestrateDispatchUseCase _orchestrateDispatchUseCase;
+    private readonly AcceptDispatchOfferUseCase _acceptDispatchOfferUseCase;
+    private readonly RejectDispatchOfferUseCase _rejectDispatchOfferUseCase;
 
     public DispatchController(
         GetEligibleAlliesUseCase getEligibleAlliesUseCase,
-        OrchestrateDispatchUseCase orchestrateDispatchUseCase)
+        OrchestrateDispatchUseCase orchestrateDispatchUseCase,
+        AcceptDispatchOfferUseCase acceptDispatchOfferUseCase,
+        RejectDispatchOfferUseCase rejectDispatchOfferUseCase)
     {
         _getEligibleAlliesUseCase = getEligibleAlliesUseCase ?? throw new ArgumentNullException(nameof(getEligibleAlliesUseCase));
         _orchestrateDispatchUseCase = orchestrateDispatchUseCase ?? throw new ArgumentNullException(nameof(orchestrateDispatchUseCase));
+        _acceptDispatchOfferUseCase = acceptDispatchOfferUseCase ?? throw new ArgumentNullException(nameof(acceptDispatchOfferUseCase));
+        _rejectDispatchOfferUseCase = rejectDispatchOfferUseCase ?? throw new ArgumentNullException(nameof(rejectDispatchOfferUseCase));
     }
 
     [HttpGet("health")]
@@ -261,48 +264,176 @@ public class DispatchController : ControllerBase
     }
 
     /// <summary>
-    /// Aceptación de servicio con exclusión concurrente atómica (RF-14 / RNF-05).
+    /// Aceptación de servicio con exclusión concurrente atómica en Base de Datos (RF-14 / RNF-05 / SCRUM-1074).
+    /// Paridad completa con RPC 005: validación de estado VERIFICADO, aislamiento multitenant e idempotencia.
     /// </summary>
     [HttpPost("requests/{requestId}/accept")]
-    public IActionResult AcceptRequest(string requestId, [FromBody] AcceptRequestDto dto)
+    public async Task<IActionResult> AcceptRequest(string requestId, [FromBody] AcceptRequestDto? dto)
     {
         var correlationId = GetOrCreateCorrelationId();
 
-        if (dto == null || string.IsNullOrWhiteSpace(dto.AllyId))
+        var authResult = JwtAuthHelper.Authenticate(Request.Headers.Authorization);
+        if (!authResult.IsAuthenticated)
+        {
+            return Unauthorized(new
+            {
+                error = authResult.ErrorMessage,
+                status = StatusCodes.Status401Unauthorized,
+                correlationId,
+                timestamp = DateTime.UtcNow.ToString("o")
+            });
+        }
+
+        var tenantId = authResult.TenantId!.Value;
+        if (!Guid.TryParse(authResult.UserId, out var usuarioGuid))
+        {
+            return Unauthorized(new
+            {
+                error = "El identificador de usuario en el token JWT no es un UUID válido.",
+                status = StatusCodes.Status401Unauthorized,
+                correlationId,
+                timestamp = DateTime.UtcNow.ToString("o")
+            });
+        }
+
+        try
+        {
+            var result = await _acceptDispatchOfferUseCase.ExecuteAsync(requestId, tenantId, usuarioGuid);
+
+            return result.Status switch
+            {
+                AssignmentStatus.Assigned => Ok(new
+                {
+                    message = "Solicitud asignada exitosamente al profesional.",
+                    requestId,
+                    assignedAllyId = result.AssignedAllyId,
+                    status = "ASSIGNED",
+                    correlationId,
+                    timestamp = DateTime.UtcNow.ToString("o")
+                }),
+                AssignmentStatus.AlreadyAssigned => Ok(new
+                {
+                    message = "Solicitud ya asignada previamente a este profesional (reintento idempotente).",
+                    requestId,
+                    assignedAllyId = result.AssignedAllyId,
+                    status = "ASSIGNED",
+                    isRetry = true,
+                    correlationId,
+                    timestamp = DateTime.UtcNow.ToString("o")
+                }),
+                AssignmentStatus.Conflict => Conflict(new
+                {
+                    error = "La solicitud ya fue aceptada por otro profesional.",
+                    status = StatusCodes.Status409Conflict,
+                    correlationId,
+                    assignedTo = result.AssignedAllyId,
+                    timestamp = DateTime.UtcNow.ToString("o")
+                }),
+                AssignmentStatus.NotFound => NotFound(new
+                {
+                    error = $"Solicitud con ID '{requestId}' no encontrada para el tenant autenticado.",
+                    status = StatusCodes.Status404NotFound,
+                    correlationId,
+                    timestamp = DateTime.UtcNow.ToString("o")
+                }),
+                _ => Conflict(new
+                {
+                    error = result.Message ?? "La solicitud no está disponible para asignación.",
+                    status = StatusCodes.Status409Conflict,
+                    correlationId,
+                    timestamp = DateTime.UtcNow.ToString("o")
+                })
+            };
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                error = ex.Message,
+                status = StatusCodes.Status403Forbidden,
+                correlationId,
+                timestamp = DateTime.UtcNow.ToString("o")
+            });
+        }
+        catch (ArgumentException ex)
         {
             return BadRequest(new
             {
-                error = "El identificador del aliado (AllyId) es obligatorio.",
+                error = ex.Message,
                 status = StatusCodes.Status400BadRequest,
                 correlationId,
                 timestamp = DateTime.UtcNow.ToString("o")
             });
         }
+    }
 
-        bool wonAssignment = AcceptedRequests.TryAdd(requestId, dto.AllyId);
+    /// <summary>
+    /// Rechazo explícito de solicitud por parte del aliado (RF-14 / SCRUM-1074).
+    /// Registra el evento en solicitud_rechazo para evitar que el algoritmo lo vuelva a emparejar.
+    /// </summary>
+    [HttpPost("requests/{requestId}/reject")]
+    public async Task<IActionResult> RejectRequest(string requestId, [FromBody] RejectRequestDto? dto)
+    {
+        var correlationId = GetOrCreateCorrelationId();
 
-        if (!wonAssignment)
+        var authResult = JwtAuthHelper.Authenticate(Request.Headers.Authorization);
+        if (!authResult.IsAuthenticated)
         {
-            AcceptedRequests.TryGetValue(requestId, out var winningAllyId);
-            return Conflict(new
+            return Unauthorized(new
             {
-                error = "La solicitud ya fue aceptada por otro profesional.",
-                status = StatusCodes.Status409Conflict,
+                error = authResult.ErrorMessage,
+                status = StatusCodes.Status401Unauthorized,
                 correlationId,
-                assignedTo = winningAllyId,
                 timestamp = DateTime.UtcNow.ToString("o")
             });
         }
 
-        return Ok(new
+        var tenantId = authResult.TenantId!.Value;
+        if (!Guid.TryParse(authResult.UserId, out var usuarioGuid))
         {
-            message = "Solicitud asignada exitosamente al profesional.",
-            requestId,
-            assignedAllyId = dto.AllyId,
-            status = "ASSIGNED",
-            correlationId,
-            timestamp = DateTime.UtcNow.ToString("o")
-        });
+            return Unauthorized(new
+            {
+                error = "El identificador de usuario en el token JWT no es un UUID válido.",
+                status = StatusCodes.Status401Unauthorized,
+                correlationId,
+                timestamp = DateTime.UtcNow.ToString("o")
+            });
+        }
+
+        try
+        {
+            await _rejectDispatchOfferUseCase.ExecuteAsync(requestId, tenantId, usuarioGuid, dto?.Motivo);
+
+            return Ok(new
+            {
+                message = "Rechazo de oferta registrado exitosamente.",
+                requestId,
+                motivo = dto?.Motivo ?? "NO_DISPONIBLE",
+                status = "REJECTED",
+                correlationId,
+                timestamp = DateTime.UtcNow.ToString("o")
+            });
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                error = ex.Message,
+                status = StatusCodes.Status403Forbidden,
+                correlationId,
+                timestamp = DateTime.UtcNow.ToString("o")
+            });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new
+            {
+                error = ex.Message,
+                status = StatusCodes.Status400BadRequest,
+                correlationId,
+                timestamp = DateTime.UtcNow.ToString("o")
+            });
+        }
     }
 
     private string GetOrCreateCorrelationId()
@@ -316,4 +447,5 @@ public class DispatchController : ControllerBase
     }
 }
 
-public record AcceptRequestDto(string AllyId);
+public record AcceptRequestDto(string? AllyId);
+public record RejectRequestDto(string? Motivo);
