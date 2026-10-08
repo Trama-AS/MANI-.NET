@@ -120,6 +120,22 @@ docker run -d -p 5000:5000 --name mani-dispatch mani-dispatch-dotnet:local
 
 ---
 
+## 🧪 Pruebas y cobertura
+
+Las pruebas están en `tests/Mani.Dispatch.Tests` (xUnit 2 + coverlet, .NET 8).
+
+```bash
+# Ejecutar pruebas
+dotnet test tests/Mani.Dispatch.Tests
+
+# Ejecutar pruebas y generar el reporte de cobertura (OpenCover) en ./TestResults
+dotnet test tests/Mani.Dispatch.Tests --collect:"XPlat Code Coverage" --results-directory ./TestResults -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
+```
+
+El workflow `CI` (`.github/workflows/ci.yml`) ejecuta lo mismo en cada Pull Request y en cada push a `main`, y publica el reporte como artefacto. Para conectarlo al Quality Gate, el análisis de SonarQube debe leer `**/coverage.opencover.xml` (`sonar.cs.opencover.reportsPaths`); crear el proyecto en SonarCloud y su token queda pendiente de DevOps.
+
+---
+
 ## 👥 Equipo y Gobernanza
 * **Organización:** [TRAMA · Ingeniería de Software](https://github.com/Trama-AS)
 * **Repositorio Oficial:** [MANI-.NET](https://github.com/Trama-AS/MANI-.NET)
