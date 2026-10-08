@@ -46,42 +46,26 @@ public class OrchestrateDispatchUseCase
 
         var solicitud = await _allyRepository.GetSolicitudContextAsync(requestGuid, tenantId);
 
-        if (solicitud != null)
+        if (solicitud == null)
         {
-            if (string.Equals(solicitud.Estado, "ASIGNADA", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(solicitud.Estado, "CANCELADA", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(solicitud.Estado, "FINALIZADA", StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidOperationException(
-                    $"La solicitud '{request.RequestId}' ya se encuentra en estado '{solicitud.Estado}' y no admite nuevo despacho.");
-            }
-
-            resolvedZonaGuid = solicitud.ZonaId;
-            resolvedCategoriaGuid = solicitud.CategoriaId;
+            throw new KeyNotFoundException($"Solicitud con ID '{request.RequestId}' no encontrada para el tenant autenticado.");
         }
-        else
+
+        if (string.Equals(solicitud.Estado, "ASIGNADA", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(solicitud.Estado, "CANCELADA", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(solicitud.Estado, "FINALIZADA", StringComparison.OrdinalIgnoreCase))
         {
-            // Si la solicitud no existe aún en BD (desacople con US-04.1.1-M2), se exige zona y categoría en el payload
-            if (string.IsNullOrWhiteSpace(request.ZonaId) || string.IsNullOrWhiteSpace(request.CategoriaId))
-            {
-                throw new KeyNotFoundException(
-                    $"Solicitud '{request.RequestId}' no encontrada en el tenant y no se proporcionaron zonaId y categoriaId explícitos.");
-            }
-
-            if (!Guid.TryParse(request.ZonaId, out resolvedZonaGuid))
-            {
-                throw new ArgumentException($"El parámetro ZonaId '{request.ZonaId}' no es un UUID válido.");
-            }
-
-            if (!Guid.TryParse(request.CategoriaId, out resolvedCategoriaGuid))
-            {
-                throw new ArgumentException($"El parámetro CategoriaId '{request.CategoriaId}' no es un UUID válido.");
-            }
+            throw new InvalidOperationException(
+                $"La solicitud '{request.RequestId}' ya se encuentra en estado '{solicitud.Estado}' y no admite nuevo despacho.");
         }
+
+        resolvedZonaGuid = solicitud.ZonaId;
+        resolvedCategoriaGuid = solicitud.CategoriaId;
 
         var criteria = new MatchCriteria
         {
             TenantId = tenantId,
+            RequestId = requestGuid,
             ZonaId = resolvedZonaGuid,
             CategoriaId = resolvedCategoriaGuid,
             Page = 1,

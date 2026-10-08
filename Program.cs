@@ -26,7 +26,7 @@ builder.Services.AddCors(options =>
 
 // Inyección de dependencias para Arquitectura Limpia
 builder.Services.AddScoped<IAllyRepository, PostgresAllyRepository>();
-builder.Services.AddScoped<IDispatchPublisher, InMemoryDispatchPublisher>();
+builder.Services.AddScoped<IDispatchPublisher, PostgresDispatchPublisher>();
 builder.Services.AddScoped<GetEligibleAlliesUseCase>();
 builder.Services.AddScoped<OrchestrateDispatchUseCase>();
 

@@ -122,39 +122,25 @@ public class OrchestrateDispatchUseCaseTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WhenSolicitudNotFoundButExplicitParamsProvided_DispatchesSuccessfully()
+    public async Task ExecuteAsync_WhenSolicitudNotFoundInDb_ThrowsKeyNotFoundException()
     {
         // Arrange
         var tenantId = Guid.NewGuid();
         var requestId = Guid.NewGuid();
-        var zonaId = Guid.NewGuid();
-        var categoriaId = Guid.NewGuid();
 
         _mockRepo.Setup(r => r.GetSolicitudContextAsync(requestId, tenantId))
                  .ReturnsAsync((SolicitudContext?)null);
 
-        var allies = new List<Ally>
-        {
-            new() { Id = Guid.NewGuid(), NombreRazonSocial = "Aliado Independiente", Tipo = "independiente", EstadoVerificacion = "aprobado" }
-        };
-
-        _mockRepo.Setup(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()))
-                 .ReturnsAsync((allies, 1));
-
         var request = new OrchestrateRequestDto
         {
             RequestId = requestId.ToString(),
-            ZonaId = zonaId.ToString(),
-            CategoriaId = categoriaId.ToString()
+            ZonaId = Guid.NewGuid().ToString(),
+            CategoriaId = Guid.NewGuid().ToString()
         };
 
-        // Act
-        var result = await _useCase.ExecuteAsync(request, "corr-fallback", tenantId);
-
-        // Assert
-        Assert.NotNull(result);
-        Assert.Equal("DISPATCHED", result.Status);
-        Assert.Equal(1, result.CandidatesCount);
+        // Act & Assert (DoD §9.3: La solicitud DEBE existir en base de datos)
+        await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+            _useCase.ExecuteAsync(request, "corr-not-found", tenantId));
     }
 
     [Fact]
