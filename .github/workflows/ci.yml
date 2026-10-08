@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build & Test (.NET 8)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore ManiDispatch.sln
+
+      - name: Build solution
+        run: dotnet build ManiDispatch.sln --no-restore --configuration Release
+
+      - name: Run unit & integration tests
+        run: dotnet test ManiDispatch.sln --no-build --configuration Release --verbosity normal

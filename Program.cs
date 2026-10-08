@@ -1,4 +1,11 @@
 using System.Text.Json;
+using ManiDispatch.Application.Interfaces;
+using ManiDispatch.Application.UseCases;
+using ManiDispatch.Infrastructure.Dispatch;
+using ManiDispatch.Infrastructure.Repositories;
+
+// Cargar variables de entorno si existe .env
+DotNetEnv.Env.Load();
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -16,6 +23,12 @@ builder.Services.AddCors(options =>
         policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
     });
 });
+
+// Inyección de dependencias para Arquitectura Limpia
+builder.Services.AddScoped<IAllyRepository, PostgresAllyRepository>();
+builder.Services.AddScoped<IDispatchPublisher, PostgresDispatchPublisher>();
+builder.Services.AddScoped<GetEligibleAlliesUseCase>();
+builder.Services.AddScoped<OrchestrateDispatchUseCase>();
 
 var app = builder.Build();
 
