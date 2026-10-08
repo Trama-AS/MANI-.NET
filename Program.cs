@@ -48,19 +48,6 @@ app.Use(async (context, next) =>
     await next();
 });
 
-// Endpoint de Healthcheck rápido
-app.MapGet("/health", (HttpContext ctx) =>
-{
-    var correlationId = ctx.Response.Headers["X-Correlation-ID"].ToString();
-    return Results.Ok(new
-    {
-        status = "UP",
-        service = "MANI-Dispatch-DotNet",
-        timestamp = DateTime.UtcNow.ToString("o"),
-        correlationId
-    });
-});
-
 app.MapControllers();
 
 app.Run();

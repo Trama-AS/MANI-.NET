@@ -6,3 +6,5 @@ obj/
 .idea/
 .vscode/
 *.log
+.env
+.env.*
