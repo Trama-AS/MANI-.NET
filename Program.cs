@@ -1,4 +1,11 @@
 using System.Text.Json;
+using ManiDispatch.Application.Interfaces;
+using ManiDispatch.Application.UseCases;
+using ManiDispatch.Infrastructure.Dispatch;
+using ManiDispatch.Infrastructure.Repositories;
+
+// Cargar variables de entorno si existe .env
+DotNetEnv.Env.Load();
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -17,6 +24,15 @@ builder.Services.AddCors(options =>
     });
 });
 
+// Inyección de dependencias para Arquitectura Limpia
+builder.Services.AddScoped<IAllyRepository, PostgresAllyRepository>();
+builder.Services.AddScoped<IDispatchPublisher, PostgresDispatchPublisher>();
+builder.Services.AddScoped<ISolicitudAssignmentRepository, PostgresSolicitudAssignmentRepository>();
+builder.Services.AddScoped<GetEligibleAlliesUseCase>();
+builder.Services.AddScoped<OrchestrateDispatchUseCase>();
+builder.Services.AddScoped<AcceptDispatchOfferUseCase>();
+builder.Services.AddScoped<RejectDispatchOfferUseCase>();
+
 var app = builder.Build();
 
 app.UseCors();
@@ -30,19 +46,6 @@ app.Use(async (context, next) =>
     }
     context.Response.Headers["X-Correlation-ID"] = correlationId;
     await next();
-});
-
-// Endpoint de Healthcheck rápido
-app.MapGet("/health", (HttpContext ctx) =>
-{
-    var correlationId = ctx.Response.Headers["X-Correlation-ID"].ToString();
-    return Results.Ok(new
-    {
-        status = "UP",
-        service = "MANI-Dispatch-DotNet",
-        timestamp = DateTime.UtcNow.ToString("o"),
-        correlationId
-    });
 });
 
 app.MapControllers();
