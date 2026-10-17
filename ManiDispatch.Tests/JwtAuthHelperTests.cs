@@ -172,7 +172,7 @@ public class JwtAuthHelperTests
     }
 
     [Fact]
-    public void Authenticate_InDevelopment_WithValidToken_ReadsWithoutSecret()
+    public void Authenticate_ReturnsFalse_WhenNoSecretConfigured_EvenInDevelopment()
     {
         var prevSecret = Environment.GetEnvironmentVariable("SUPABASE_JWT_SECRET");
         var prevEnv = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT");
@@ -185,8 +185,8 @@ public class JwtAuthHelperTests
             var token = TestTokenHelper.CreateTestToken(tenantId);
             var result = JwtAuthHelper.Authenticate($"Bearer {token}");
 
-            Assert.True(result.IsAuthenticated);
-            Assert.Equal(tenantId, result.TenantId);
+            Assert.False(result.IsAuthenticated);
+            Assert.Contains("Configuración de autenticación incompleta", result.ErrorMessage);
         }
         finally
         {
