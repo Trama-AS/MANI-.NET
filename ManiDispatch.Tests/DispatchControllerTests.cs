@@ -15,6 +15,7 @@ using Xunit;
 
 namespace ManiDispatch.Tests;
 
+[Collection("JwtAuthEnvironment")]
 public class DispatchControllerTests
 {
     private readonly Mock<IAllyRepository> _mockRepo;
