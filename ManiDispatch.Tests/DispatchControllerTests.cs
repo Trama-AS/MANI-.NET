@@ -20,7 +20,7 @@ public class DispatchControllerTests
 {
     private readonly Mock<IAllyRepository> _mockRepo;
     private readonly Mock<IDispatchPublisher> _mockPublisher;
-    private readonly ISolicitudAssignmentRepository _assignmentRepo;
+    private readonly InMemorySolicitudAssignmentRepository _assignmentRepo;
     private readonly GetEligibleAlliesUseCase _getEligibleUseCase;
     private readonly OrchestrateDispatchUseCase _orchestrateUseCase;
     private readonly AcceptDispatchOfferUseCase _acceptUseCase;
@@ -39,8 +39,7 @@ public class DispatchControllerTests
 
         _mockRepo = new Mock<IAllyRepository>();
         _mockPublisher = new Mock<IDispatchPublisher>();
-        var mockConfig = new Mock<Microsoft.Extensions.Configuration.IConfiguration>();
-        _assignmentRepo = new PostgresSolicitudAssignmentRepository(mockConfig.Object, Microsoft.Extensions.Logging.Abstractions.NullLogger<PostgresSolicitudAssignmentRepository>.Instance);
+        _assignmentRepo = new InMemorySolicitudAssignmentRepository();
 
         _getEligibleUseCase = new GetEligibleAlliesUseCase(_mockRepo.Object);
         _orchestrateUseCase = new OrchestrateDispatchUseCase(_mockRepo.Object, _mockPublisher.Object);
@@ -279,6 +278,9 @@ public class DispatchControllerTests
         var ally1UserId = Guid.NewGuid();
         var ally2UserId = Guid.NewGuid();
 
+        _assignmentRepo.RegisterAlly(new AllyProfile(Guid.NewGuid(), _testTenantId, ally1UserId, "VERIFICADO"));
+        _assignmentRepo.RegisterAlly(new AllyProfile(Guid.NewGuid(), _testTenantId, ally2UserId, "VERIFICADO"));
+
         var ally1Token = TestTokenHelper.CreateTestToken(_testTenantId, ally1UserId.ToString(), "aliado");
         var ally2Token = TestTokenHelper.CreateTestToken(_testTenantId, ally2UserId.ToString(), "aliado");
 
@@ -306,10 +308,54 @@ public class DispatchControllerTests
     }
 
     [Fact]
+    public async Task AcceptRequest_WhenAllyProfileDoesNotExist_Returns403Forbidden()
+    {
+        string reqId = Guid.NewGuid().ToString();
+        var unknownAllyUserId = Guid.NewGuid();
+        var token = TestTokenHelper.CreateTestToken(_testTenantId, unknownAllyUserId.ToString(), "aliado");
+
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
+        var result = await _controller.AcceptRequest(reqId);
+
+        var forbiddenResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(403, forbiddenResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task AcceptRequest_WhenDatabaseFails_Returns503ServiceUnavailable_AndDoesNotFallbackToMemory()
+    {
+        var mockConfig = new Mock<Microsoft.Extensions.Configuration.IConfiguration>();
+        var postgresRepo = new PostgresSolicitudAssignmentRepository(
+            mockConfig.Object,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<PostgresSolicitudAssignmentRepository>.Instance);
+        var controller = new DispatchController(
+            _getEligibleUseCase,
+            _orchestrateUseCase,
+            new AcceptDispatchOfferUseCase(postgresRepo),
+            new RejectDispatchOfferUseCase(postgresRepo))
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext()
+            }
+        };
+
+        var allyUserId = Guid.NewGuid();
+        var token = TestTokenHelper.CreateTestToken(_testTenantId, allyUserId.ToString(), "aliado");
+        controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
+
+        var result = await controller.AcceptRequest(Guid.NewGuid().ToString());
+
+        var unavailableResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(503, unavailableResult.StatusCode);
+    }
+
+    [Fact]
     public async Task RejectRequest_WithAuthenticatedAlly_ReturnsOkRejected()
     {
         string reqId = Guid.NewGuid().ToString();
         var allyUserId = Guid.NewGuid();
+        _assignmentRepo.RegisterAlly(new AllyProfile(Guid.NewGuid(), _testTenantId, allyUserId, "VERIFICADO"));
         var allyToken = TestTokenHelper.CreateTestToken(_testTenantId, allyUserId.ToString(), "aliado");
 
         _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {allyToken}";
@@ -317,6 +363,35 @@ public class DispatchControllerTests
 
         var okResult = Assert.IsType<OkObjectResult>(result);
         Assert.Equal(200, okResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task RejectRequest_WhenDatabaseFails_Returns503ServiceUnavailable()
+    {
+        var mockConfig = new Mock<Microsoft.Extensions.Configuration.IConfiguration>();
+        var postgresRepo = new PostgresSolicitudAssignmentRepository(
+            mockConfig.Object,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<PostgresSolicitudAssignmentRepository>.Instance);
+        var controller = new DispatchController(
+            _getEligibleUseCase,
+            _orchestrateUseCase,
+            new AcceptDispatchOfferUseCase(postgresRepo),
+            new RejectDispatchOfferUseCase(postgresRepo))
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext()
+            }
+        };
+
+        var allyUserId = Guid.NewGuid();
+        var token = TestTokenHelper.CreateTestToken(_testTenantId, allyUserId.ToString(), "aliado");
+        controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
+
+        var result = await controller.RejectRequest(Guid.NewGuid().ToString(), new RejectRequestDto("NO_DISPONIBLE"));
+
+        var unavailableResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(503, unavailableResult.StatusCode);
     }
 
     [Fact]

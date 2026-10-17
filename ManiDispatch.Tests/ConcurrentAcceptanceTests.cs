@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using ManiDispatch.Application.Interfaces;
 using ManiDispatch.Application.UseCases;
 using ManiDispatch.Infrastructure.Repositories;
+using ManiDispatch.Tests.Helpers;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -19,9 +20,7 @@ public class ConcurrentAcceptanceTests
     public async Task AcceptRequest_With50SimultaneousAllies_OnlyOneWins_AndOthersReceive409Conflict()
     {
         // Arrange (RNF-05 / ADR-0016 / SCRUM-1074)
-        var mockConfig = new Mock<IConfiguration>();
-        // Sin connection string para usar el motor de exclusión concurrente en memoria atómica
-        var repo = new PostgresSolicitudAssignmentRepository(mockConfig.Object, NullLogger<PostgresSolicitudAssignmentRepository>.Instance);
+        var repo = new InMemorySolicitudAssignmentRepository();
         var useCase = new AcceptDispatchOfferUseCase(repo);
 
         var tenantId = Guid.NewGuid();
@@ -33,7 +32,7 @@ public class ConcurrentAcceptanceTests
             var userId = Guid.NewGuid();
             var allyId = Guid.NewGuid();
             var profile = new AllyProfile(allyId, tenantId, userId, "VERIFICADO");
-            repo.RegisterMemoryAlly(profile);
+            repo.RegisterAlly(profile);
             return (UserId: userId, AllyId: allyId);
         }).ToList();
 
@@ -76,8 +75,7 @@ public class ConcurrentAcceptanceTests
     public async Task AcceptRequest_WhenAllyNotVerified_ThrowsUnauthorizedAccessException_WithManiSol403V()
     {
         // Arrange
-        var mockConfig = new Mock<IConfiguration>();
-        var repo = new PostgresSolicitudAssignmentRepository(mockConfig.Object, NullLogger<PostgresSolicitudAssignmentRepository>.Instance);
+        var repo = new InMemorySolicitudAssignmentRepository();
         var useCase = new AcceptDispatchOfferUseCase(repo);
 
         var tenantId = Guid.NewGuid();
@@ -86,12 +84,47 @@ public class ConcurrentAcceptanceTests
 
         // Aliado con estado pendiente (no verificado)
         var profile = new AllyProfile(Guid.NewGuid(), tenantId, unverifiedUserId, "PENDIENTE");
-        repo.RegisterMemoryAlly(profile);
+        repo.RegisterAlly(profile);
 
         // Act & Assert (DoD §9.3)
         var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             useCase.ExecuteAsync(requestId, tenantId, unverifiedUserId));
 
         Assert.Contains("MANI-SOL-403V", ex.Message);
+    }
+
+    [Fact]
+    public async Task AcceptRequest_WhenAllyProfileDoesNotExist_ThrowsUnauthorizedAccessException_AndDoesNotFabricateProfile()
+    {
+        // Arrange: Usuario autenticado que NO está registrado como aliado en el tenant
+        var repo = new InMemorySolicitudAssignmentRepository();
+        var useCase = new AcceptDispatchOfferUseCase(repo);
+
+        var tenantId = Guid.NewGuid();
+        var requestId = Guid.NewGuid().ToString();
+        var unknownUserId = Guid.NewGuid();
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            useCase.ExecuteAsync(requestId, tenantId, unknownUserId));
+
+        Assert.Contains("no existe un perfil de aliado", ex.Message);
+    }
+
+    [Fact]
+    public async Task PostgresSolicitudAssignmentRepository_WhenDatabaseUnavailable_FailsClosedAndThrows()
+    {
+        // Arrange: sin cadena de conexión configurada (ADR-0016: sin BD la aceptación no puede confirmarse)
+        var mockConfig = new Mock<IConfiguration>();
+        var repo = new PostgresSolicitudAssignmentRepository(mockConfig.Object, NullLogger<PostgresSolicitudAssignmentRepository>.Instance);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            repo.GetAllyByUserIdAsync(Guid.NewGuid(), Guid.NewGuid()));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            repo.AcceptRequestAsync(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            repo.RejectRequestAsync(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "NO_DISPONIBLE"));
     }
 }
