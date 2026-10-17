@@ -5,6 +5,12 @@ using Xunit;
 
 namespace ManiDispatch.Tests;
 
+[CollectionDefinition("JwtAuthEnvironment", DisableParallelization = true)]
+public class JwtAuthEnvironmentCollection
+{
+}
+
+[Collection("JwtAuthEnvironment")]
 public class JwtAuthHelperTests
 {
     [Fact]
