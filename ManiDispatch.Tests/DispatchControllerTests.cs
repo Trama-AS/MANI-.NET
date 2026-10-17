@@ -433,4 +433,48 @@ public class DispatchControllerTests
         var badRequest = Assert.IsType<BadRequestObjectResult>(result);
         Assert.Equal(400, badRequest.StatusCode);
     }
+
+    [Fact]
+    public async Task OrchestrateDispatch_WithAliadoRole_Returns403Forbidden()
+    {
+        // Arrange
+        var aliadoToken = TestTokenHelper.CreateTestToken(_testTenantId, "aliado-1", "aliado");
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {aliadoToken}";
+
+        var request = new OrchestrateRequestDto
+        {
+            RequestId = Guid.NewGuid().ToString()
+        };
+
+        // Act
+        var result = await _controller.OrchestrateDispatch(request);
+
+        // Assert: aliado rol debe recibir 403 Forbidden
+        var forbiddenResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(403, forbiddenResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task OrchestrateDispatch_WithAdminTenantRole_WhenSolicitudNotFound_Returns404()
+    {
+        // Arrange
+        var adminToken = TestTokenHelper.CreateTestToken(_testTenantId, "admin-1", "admin_tenant");
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {adminToken}";
+
+        var requestId = Guid.NewGuid();
+        _mockRepo.Setup(r => r.GetSolicitudContextAsync(requestId, _testTenantId))
+                 .ReturnsAsync((SolicitudContext?)null);
+
+        var request = new OrchestrateRequestDto
+        {
+            RequestId = requestId.ToString()
+        };
+
+        // Act
+        var result = await _controller.OrchestrateDispatch(request);
+
+        // Assert
+        var notFound = Assert.IsType<NotFoundObjectResult>(result);
+        Assert.Equal(404, notFound.StatusCode);
+    }
 }
