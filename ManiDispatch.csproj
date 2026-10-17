@@ -8,4 +8,12 @@
     <AssemblyName>Mani.Dispatch</AssemblyName>
   </PropertyGroup>
 
+  <!-- Las pruebas viven en tests/ con su propio proyecto; sin esta exclusión el SDK las
+       compilaría dentro del servicio y `dotnet publish` fallaría por falta de xUnit. -->
+  <ItemGroup>
+    <Compile Remove="tests/**" />
+    <EmbeddedResource Remove="tests/**" />
+    <None Remove="tests/**" />
+  </ItemGroup>
+
 </Project>
