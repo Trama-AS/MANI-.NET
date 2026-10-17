@@ -35,48 +35,23 @@ public static class JwtAuthHelper
         {
             var jwtSecret = explicitJwtSecret ?? Environment.GetEnvironmentVariable("SUPABASE_JWT_SECRET");
 
-            ClaimsPrincipal principal;
-            JwtSecurityToken jwtToken;
-
-            if (!string.IsNullOrEmpty(jwtSecret))
+            if (string.IsNullOrWhiteSpace(jwtSecret))
             {
-                var validationParameters = new TokenValidationParameters
-                {
-                    ValidateIssuerSigningKey = true,
-                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
-                    ValidateIssuer = false,
-                    ValidateAudience = false,
-                    ValidateLifetime = true,
-                    ClockSkew = TimeSpan.FromMinutes(5)
-                };
-
-                principal = TokenHandler.ValidateToken(token, validationParameters, out var validatedToken);
-                jwtToken = (JwtSecurityToken)validatedToken;
+                return new AuthResult(false, null, null, null, "Configuración de autenticación incompleta: SUPABASE_JWT_SECRET no configurado.");
             }
-            else
+
+            var validationParameters = new TokenValidationParameters
             {
-                // Fallback seguro: fallar cerrado fuera de Development si no se configuró la firma
-                var env = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT");
-                if (!string.Equals(env, "Development", StringComparison.OrdinalIgnoreCase))
-                {
-                    return new AuthResult(false, null, null, null, "Configuración de autenticación incompleta: SUPABASE_JWT_SECRET no configurado.");
-                }
+                ValidateIssuerSigningKey = true,
+                IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
+                ValidateIssuer = false,
+                ValidateAudience = false,
+                ValidateLifetime = true,
+                ClockSkew = TimeSpan.FromMinutes(5)
+            };
 
-                // Modo lectura únicamente para desarrollo local offline
-                if (!TokenHandler.CanReadToken(token))
-                {
-                    return new AuthResult(false, null, null, null, "Formato de token JWT inválido.");
-                }
-
-                jwtToken = TokenHandler.ReadJwtToken(token);
-                if (jwtToken.ValidTo != DateTime.MinValue && jwtToken.ValidTo < DateTime.UtcNow)
-                {
-                    return new AuthResult(false, null, null, null, "El token ha expirado.");
-                }
-
-                var identity = new ClaimsIdentity(jwtToken.Claims, "jwt");
-                principal = new ClaimsPrincipal(identity);
-            }
+            var principal = TokenHandler.ValidateToken(token, validationParameters, out var validatedToken);
+            var jwtToken = (JwtSecurityToken)validatedToken;
 
             string? userId = jwtToken.Subject ?? principal.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             string? tenantIdStr = null;
