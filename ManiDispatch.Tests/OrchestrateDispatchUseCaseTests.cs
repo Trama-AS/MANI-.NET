@@ -180,4 +180,53 @@ public class OrchestrateDispatchUseCaseTests
 
         _mockPublisher.Verify(p => p.PublishOfferAsync(It.IsAny<DispatchOffer>()), Times.Never);
     }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenOffersAlreadyExist_ReturnsExistingOffers_WithoutDuplicatePublishing()
+    {
+        // Arrange
+        var tenantId = Guid.NewGuid();
+        var requestId = Guid.NewGuid();
+        var zonaId = Guid.NewGuid();
+        var categoriaId = Guid.NewGuid();
+        var allyId = Guid.NewGuid();
+
+        var solicitud = new SolicitudContext
+        {
+            Id = requestId,
+            TenantId = tenantId,
+            ZonaId = zonaId,
+            CategoriaId = categoriaId,
+            Estado = "PENDIENTE"
+        };
+
+        _mockRepo.Setup(r => r.GetSolicitudContextAsync(requestId, tenantId))
+                 .ReturnsAsync(solicitud);
+
+        var existingOffers = new List<DispatchOffer>
+        {
+            new(requestId, tenantId, allyId, "Aliado Existente", "ENVIADA", "corr-prev", DateTime.UtcNow.AddMinutes(-5))
+        };
+
+        _mockPublisher.Setup(p => p.GetOffersByRequestAsync(requestId, tenantId))
+                      .ReturnsAsync(existingOffers);
+
+        var request = new OrchestrateRequestDto
+        {
+            RequestId = requestId.ToString()
+        };
+
+        // Act
+        var result = await _useCase.ExecuteAsync(request, "corr-retry", tenantId);
+
+        // Assert (RNF-03: idempotente, no re-publica)
+        Assert.NotNull(result);
+        Assert.Equal("DISPATCHED", result.Status);
+        Assert.Equal(1, result.CandidatesCount);
+        Assert.Single(result.CandidatesNotified);
+        Assert.Equal(allyId.ToString(), result.CandidatesNotified.First().AllyId);
+        Assert.Contains("idempotente", result.Message, StringComparison.OrdinalIgnoreCase);
+
+        _mockPublisher.Verify(p => p.PublishOfferAsync(It.IsAny<DispatchOffer>()), Times.Never);
+    }
 }

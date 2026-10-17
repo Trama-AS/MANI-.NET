@@ -55,7 +55,14 @@ public static class JwtAuthHelper
             }
             else
             {
-                // Fallback para entornos de desarrollo/test donde no se configure SUPABASE_JWT_SECRET
+                // Fallback seguro: fallar cerrado fuera de Development si no se configuró la firma
+                var env = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT");
+                if (!string.Equals(env, "Development", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new AuthResult(false, null, null, null, "Configuración de autenticación incompleta: SUPABASE_JWT_SECRET no configurado.");
+                }
+
+                // Modo lectura únicamente para desarrollo local offline
                 if (!TokenHandler.CanReadToken(token))
                 {
                     return new AuthResult(false, null, null, null, "Formato de token JWT inválido.");

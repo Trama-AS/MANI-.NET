@@ -31,6 +31,9 @@ public class DispatchControllerTests
 
     public DispatchControllerTests()
     {
+        Environment.SetEnvironmentVariable("SUPABASE_JWT_SECRET", TestTokenHelper.DefaultTestSecret);
+        Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Development");
+
         _testTenantId = Guid.NewGuid();
         _validJwtToken = TestTokenHelper.CreateTestToken(_testTenantId, "user-client-1", "cliente");
 
@@ -314,5 +317,205 @@ public class DispatchControllerTests
 
         var okResult = Assert.IsType<OkObjectResult>(result);
         Assert.Equal(200, okResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task MatchProfessionals_WithAlteredToken_Returns401Unauthorized()
+    {
+        // Arrange
+        var token = TestTokenHelper.CreateTestToken(_testTenantId, secret: "wrong-secret-that-does-not-match-at-least-32-chars!");
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
+
+        var prevSecret = Environment.GetEnvironmentVariable("SUPABASE_JWT_SECRET");
+        try
+        {
+            Environment.SetEnvironmentVariable("SUPABASE_JWT_SECRET", TestTokenHelper.DefaultTestSecret);
+
+            var request = new MatchRequestDto
+            {
+                ZonaId = Guid.NewGuid().ToString(),
+                CategoriaId = Guid.NewGuid().ToString()
+            };
+
+            // Act
+            var result = await _controller.MatchProfessionals(request);
+
+            // Assert
+            var unauthResult = Assert.IsType<UnauthorizedObjectResult>(result);
+            Assert.Equal(401, unauthResult.StatusCode);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("SUPABASE_JWT_SECRET", prevSecret);
+        }
+    }
+
+    [Fact]
+    public async Task MatchProfessionals_WithExpiredToken_Returns401Unauthorized()
+    {
+        // Arrange
+        var expiredToken = TestTokenHelper.CreateTestToken(
+            _testTenantId, 
+            secret: TestTokenHelper.DefaultTestSecret, 
+            expires: DateTime.UtcNow.AddMinutes(-30));
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {expiredToken}";
+
+        var prevSecret = Environment.GetEnvironmentVariable("SUPABASE_JWT_SECRET");
+        try
+        {
+            Environment.SetEnvironmentVariable("SUPABASE_JWT_SECRET", TestTokenHelper.DefaultTestSecret);
+
+            var request = new MatchRequestDto
+            {
+                ZonaId = Guid.NewGuid().ToString(),
+                CategoriaId = Guid.NewGuid().ToString()
+            };
+
+            // Act
+            var result = await _controller.MatchProfessionals(request);
+
+            // Assert
+            var unauthResult = Assert.IsType<UnauthorizedObjectResult>(result);
+            Assert.Equal(401, unauthResult.StatusCode);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("SUPABASE_JWT_SECRET", prevSecret);
+        }
+    }
+
+    [Fact]
+    public async Task MatchProfessionals_WithoutSecret_InProduction_Returns401Unauthorized()
+    {
+        // Arrange
+        var token = TestTokenHelper.CreateTestToken(_testTenantId);
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
+
+        var prevSecret = Environment.GetEnvironmentVariable("SUPABASE_JWT_SECRET");
+        var prevEnv = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT");
+        try
+        {
+            Environment.SetEnvironmentVariable("SUPABASE_JWT_SECRET", null);
+            Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Production");
+
+            var request = new MatchRequestDto
+            {
+                ZonaId = Guid.NewGuid().ToString(),
+                CategoriaId = Guid.NewGuid().ToString()
+            };
+
+            // Act
+            var result = await _controller.MatchProfessionals(request);
+
+            // Assert
+            var unauthResult = Assert.IsType<UnauthorizedObjectResult>(result);
+            Assert.Equal(401, unauthResult.StatusCode);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("SUPABASE_JWT_SECRET", prevSecret);
+            Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", prevEnv);
+        }
+    }
+
+    [Fact]
+    public void HealthCheck_ReturnsOkWithStatusUp()
+    {
+        var result = _controller.HealthCheck();
+        var okResult = Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(200, okResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetEligibleAlliesForRequest_WithInvalidGuid_Returns400BadRequest()
+    {
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+
+        var result = await _controller.GetEligibleAlliesForRequest(
+            "not-a-valid-uuid", null, null, 1, 10);
+
+        var badRequestResult = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Equal(400, badRequestResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetEligibleAlliesForRequest_WithoutAuth_Returns401Unauthorized()
+    {
+        _controller.HttpContext.Request.Headers.Remove("Authorization");
+
+        var result = await _controller.GetEligibleAlliesForRequest(
+            Guid.NewGuid().ToString(), null, null, 1, 10);
+
+        var unauthResult = Assert.IsType<UnauthorizedObjectResult>(result);
+        Assert.Equal(401, unauthResult.StatusCode);
+    }
+
+    [Fact]
+    public void AcceptRequest_WithNullOrEmptyAllyId_Returns400BadRequest()
+    {
+        var result = _controller.AcceptRequest("req-1", new AcceptRequestDto(""));
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Equal(400, badRequest.StatusCode);
+    }
+
+    [Fact]
+    public async Task MatchProfessionals_WhenUseCaseThrowsArgumentException_Returns400BadRequest()
+    {
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+
+        // Solicitud sin ZonaId ni CategoriaId dispara ArgumentException en ExecuteAsync
+        var request = new MatchRequestDto
+        {
+            ZonaId = "",
+            CategoriaId = ""
+        };
+
+        var result = await _controller.MatchProfessionals(request);
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Equal(400, badRequest.StatusCode);
+    }
+
+    [Fact]
+    public async Task OrchestrateDispatch_WithAliadoRole_Returns403Forbidden()
+    {
+        // Arrange
+        var aliadoToken = TestTokenHelper.CreateTestToken(_testTenantId, "aliado-1", "aliado");
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {aliadoToken}";
+
+        var request = new OrchestrateRequestDto
+        {
+            RequestId = Guid.NewGuid().ToString()
+        };
+
+        // Act
+        var result = await _controller.OrchestrateDispatch(request);
+
+        // Assert: aliado rol debe recibir 403 Forbidden
+        var forbiddenResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(403, forbiddenResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task OrchestrateDispatch_WithAdminTenantRole_WhenSolicitudNotFound_Returns404()
+    {
+        // Arrange
+        var adminToken = TestTokenHelper.CreateTestToken(_testTenantId, "admin-1", "admin_tenant");
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {adminToken}";
+
+        var requestId = Guid.NewGuid();
+        _mockRepo.Setup(r => r.GetSolicitudContextAsync(requestId, _testTenantId))
+                 .ReturnsAsync((SolicitudContext?)null);
+
+        var request = new OrchestrateRequestDto
+        {
+            RequestId = requestId.ToString()
+        };
+
+        // Act
+        var result = await _controller.OrchestrateDispatch(request);
+
+        // Assert
+        var notFound = Assert.IsType<NotFoundObjectResult>(result);
+        Assert.Equal(404, notFound.StatusCode);
     }
 }

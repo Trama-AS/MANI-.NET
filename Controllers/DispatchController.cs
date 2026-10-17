@@ -210,6 +210,19 @@ public class DispatchController : ControllerBase
 
         var tenantId = authResult.TenantId!.Value;
 
+        // Restricción de rol (según AGENTS.md y revisión de QA): los aliados no pueden orquestar el despacho.
+        var role = authResult.Role?.ToLowerInvariant();
+        if (role == "aliado")
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                error = "Rol no autorizado: los aliados no pueden orquestar el despacho de solicitudes.",
+                status = StatusCodes.Status403Forbidden,
+                correlationId,
+                timestamp = DateTime.UtcNow.ToString("o")
+            });
+        }
+
         if (dto != null && !string.IsNullOrWhiteSpace(dto.TenantId))
         {
             if (Guid.TryParse(dto.TenantId, out var requestedTenantGuid) && requestedTenantGuid != tenantId)

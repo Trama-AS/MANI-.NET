@@ -15,7 +15,8 @@ public static class TestTokenHelper
         Guid tenantId, 
         string userId = "test-user-id", 
         string role = "cliente", 
-        string secret = DefaultTestSecret)
+        string secret = DefaultTestSecret,
+        DateTime? expires = null)
     {
         var tokenHandler = new JwtSecurityTokenHandler();
         var key = Encoding.UTF8.GetBytes(secret);
@@ -29,6 +30,31 @@ public static class TestTokenHelper
                 tenant_id = tenantId.ToString(),
                 user_role = role
             }), JsonClaimValueTypes.Json)
+        };
+
+        var tokenDescriptor = new SecurityTokenDescriptor
+        {
+            Subject = new ClaimsIdentity(claims),
+            NotBefore = expires != null ? expires.Value.AddMinutes(-5) : null,
+            Expires = expires ?? DateTime.UtcNow.AddHours(2),
+            SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature)
+        };
+
+        var token = tokenHandler.CreateToken(tokenDescriptor);
+        return tokenHandler.WriteToken(token);
+    }
+
+    public static string CreateTokenWithoutTenant(
+        string userId = "test-user-id",
+        string secret = DefaultTestSecret)
+    {
+        var tokenHandler = new JwtSecurityTokenHandler();
+        var key = Encoding.UTF8.GetBytes(secret);
+
+        var claims = new List<Claim>
+        {
+            new Claim("sub", userId),
+            new Claim("role", "authenticated")
         };
 
         var tokenDescriptor = new SecurityTokenDescriptor

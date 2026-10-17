@@ -38,12 +38,20 @@ public class PostgresAllyRepository : IAllyRepository
             await connection.OpenAsync();
 
             const string countSql = @"
+                WITH RECURSIVE ascendencia AS (
+                    SELECT z.id, z.zona_padre_id, 1 AS nivel FROM zona z WHERE z.id = @ZonaId
+                    UNION ALL
+                    SELECT z.id, z.zona_padre_id, a.nivel + 1
+                    FROM zona z JOIN ascendencia a ON z.id = a.zona_padre_id
+                    WHERE a.nivel < 10
+                )
                 SELECT COUNT(DISTINCT a.id)
                 FROM aliado a
                 INNER JOIN aliado_categoria ac ON a.id = ac.aliado_id AND a.tenant_id = ac.tenant_id
                 INNER JOIN cobertura_aliado ca ON a.id = ca.aliado_id AND a.tenant_id = ca.tenant_id
+                INNER JOIN ascendencia asc_z ON ca.zona_id = asc_z.id
+                INNER JOIN zona z ON z.id = ca.zona_id AND z.estado = 'activa'
                 WHERE a.tenant_id = @TenantId
-                  AND ca.zona_id = @ZonaId
                   AND ac.categoria_id = @CategoriaId
                   AND (a.estado_verificacion = 'VERIFICADO' OR a.estado_verificacion = 'aprobado')
                   AND (@RequestId IS NULL OR NOT EXISTS (
@@ -52,6 +60,13 @@ public class PostgresAllyRepository : IAllyRepository
                   ));";
 
             const string selectSql = @"
+                WITH RECURSIVE ascendencia AS (
+                    SELECT z.id, z.zona_padre_id, 1 AS nivel FROM zona z WHERE z.id = @ZonaId
+                    UNION ALL
+                    SELECT z.id, z.zona_padre_id, a.nivel + 1
+                    FROM zona z JOIN ascendencia a ON z.id = a.zona_padre_id
+                    WHERE a.nivel < 10
+                )
                 SELECT DISTINCT 
                     a.id AS Id,
                     a.nombre_razon_social AS NombreRazonSocial,
@@ -60,8 +75,9 @@ public class PostgresAllyRepository : IAllyRepository
                 FROM aliado a
                 INNER JOIN aliado_categoria ac ON a.id = ac.aliado_id AND a.tenant_id = ac.tenant_id
                 INNER JOIN cobertura_aliado ca ON a.id = ca.aliado_id AND a.tenant_id = ca.tenant_id
+                INNER JOIN ascendencia asc_z ON ca.zona_id = asc_z.id
+                INNER JOIN zona z ON z.id = ca.zona_id AND z.estado = 'activa'
                 WHERE a.tenant_id = @TenantId
-                  AND ca.zona_id = @ZonaId
                   AND ac.categoria_id = @CategoriaId
                   AND (a.estado_verificacion = 'VERIFICADO' OR a.estado_verificacion = 'aprobado')
                   AND (@RequestId IS NULL OR NOT EXISTS (

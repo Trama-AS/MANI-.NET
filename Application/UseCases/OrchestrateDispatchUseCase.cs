@@ -62,6 +62,33 @@ public class OrchestrateDispatchUseCase
         resolvedZonaGuid = solicitud.ZonaId;
         resolvedCategoriaGuid = solicitud.CategoriaId;
 
+        // Idempotencia (RNF-03): verificar si ya existen ofertas previas para este requestId y tenantId
+        var existingOffers = await _dispatchPublisher.GetOffersByRequestAsync(requestGuid, tenantId);
+        if (existingOffers != null && existingOffers.Count > 0)
+        {
+            var existingDtoList = existingOffers.Select(o => new OrchestratedOfferDto
+            {
+                AllyId = o.AllyId.ToString(),
+                NombreRazonSocial = o.AllyNombre,
+                EstadoOferta = o.Estado,
+                FechaOferta = o.Timestamp
+            }).ToList();
+
+            return new OrchestrateResponseDto
+            {
+                Message = $"Despacho ya transmitido previamente. Reintento idempotente con {existingDtoList.Count} ofertas (RNF-03).",
+                RequestId = request.RequestId,
+                TenantId = tenantId.ToString(),
+                ZonaId = resolvedZonaGuid.ToString(),
+                CategoriaId = resolvedCategoriaGuid.ToString(),
+                Status = "DISPATCHED",
+                CorrelationId = correlationId,
+                CandidatesCount = existingDtoList.Count,
+                CandidatesNotified = existingDtoList,
+                Timestamp = existingOffers.First().Timestamp
+            };
+        }
+
         var criteria = new MatchCriteria
         {
             TenantId = tenantId,
