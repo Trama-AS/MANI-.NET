@@ -284,15 +284,15 @@ public class DispatchControllerTests
 
         // Act 1: Primer aliado acepta con su token
         _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {ally1Token}";
-        var result1 = await _controller.AcceptRequest(reqId, new AcceptRequestDto(null));
+        var result1 = await _controller.AcceptRequest(reqId);
 
         // Act 2: Segundo aliado colisiona con token distinto
         _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {ally2Token}";
-        var result2 = await _controller.AcceptRequest(reqId, new AcceptRequestDto(null));
+        var result2 = await _controller.AcceptRequest(reqId);
 
         // Act 3: Primer aliado reintenta (idempotente)
         _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {ally1Token}";
-        var result3 = await _controller.AcceptRequest(reqId, new AcceptRequestDto(null));
+        var result3 = await _controller.AcceptRequest(reqId);
 
         // Assert
         var okResult1 = Assert.IsType<OkObjectResult>(result1);
@@ -451,11 +451,25 @@ public class DispatchControllerTests
     }
 
     [Fact]
-    public void AcceptRequest_WithNullOrEmptyAllyId_Returns400BadRequest()
+    public async Task AcceptRequest_WithNonAliadoRole_Returns403Forbidden()
     {
-        var result = _controller.AcceptRequest("req-1", new AcceptRequestDto(""));
-        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
-        Assert.Equal(400, badRequest.StatusCode);
+        var clientToken = TestTokenHelper.CreateTestToken(_testTenantId, "client-1", "cliente");
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {clientToken}";
+
+        var result = await _controller.AcceptRequest(Guid.NewGuid().ToString());
+        var forbiddenResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(403, forbiddenResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task RejectRequest_WithNonAliadoRole_Returns403Forbidden()
+    {
+        var clientToken = TestTokenHelper.CreateTestToken(_testTenantId, "client-1", "cliente");
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {clientToken}";
+
+        var result = await _controller.RejectRequest(Guid.NewGuid().ToString(), new RejectRequestDto("Motivo"));
+        var forbiddenResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(403, forbiddenResult.StatusCode);
     }
 
     [Fact]

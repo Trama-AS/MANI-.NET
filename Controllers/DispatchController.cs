@@ -281,7 +281,7 @@ public class DispatchController : ControllerBase
     /// Paridad completa con RPC 005: validación de estado VERIFICADO, aislamiento multitenant e idempotencia.
     /// </summary>
     [HttpPost("requests/{requestId}/accept")]
-    public async Task<IActionResult> AcceptRequest(string requestId, [FromBody] AcceptRequestDto? dto)
+    public async Task<IActionResult> AcceptRequest(string requestId)
     {
         var correlationId = GetOrCreateCorrelationId();
 
@@ -292,6 +292,17 @@ public class DispatchController : ControllerBase
             {
                 error = authResult.ErrorMessage,
                 status = StatusCodes.Status401Unauthorized,
+                correlationId,
+                timestamp = DateTime.UtcNow.ToString("o")
+            });
+        }
+
+        if (!string.Equals(authResult.Role, "aliado", StringComparison.OrdinalIgnoreCase))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                error = "Rol no autorizado: únicamente los aliados pueden aceptar solicitudes.",
+                status = StatusCodes.Status403Forbidden,
                 correlationId,
                 timestamp = DateTime.UtcNow.ToString("o")
             });
@@ -401,6 +412,17 @@ public class DispatchController : ControllerBase
             });
         }
 
+        if (!string.Equals(authResult.Role, "aliado", StringComparison.OrdinalIgnoreCase))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                error = "Rol no autorizado: únicamente los aliados pueden rechazar solicitudes.",
+                status = StatusCodes.Status403Forbidden,
+                correlationId,
+                timestamp = DateTime.UtcNow.ToString("o")
+            });
+        }
+
         var tenantId = authResult.TenantId!.Value;
         if (!Guid.TryParse(authResult.UserId, out var usuarioGuid))
         {
@@ -460,5 +482,4 @@ public class DispatchController : ControllerBase
     }
 }
 
-public record AcceptRequestDto(string? AllyId);
 public record RejectRequestDto(string? Motivo);
