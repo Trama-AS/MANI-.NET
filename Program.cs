@@ -58,3 +58,7 @@ app.MapGet("/health", (HttpContext ctx) =>
 app.MapControllers();
 
 app.Run();
+
+[System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
+public partial class Program { }
+
