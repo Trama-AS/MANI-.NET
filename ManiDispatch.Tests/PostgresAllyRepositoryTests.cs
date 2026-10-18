@@ -86,4 +86,40 @@ public class PostgresAllyRepositoryTests
 
         await Assert.ThrowsAnyAsync<Exception>(() => repo.GetSolicitudContextAsync(Guid.NewGuid(), Guid.NewGuid()));
     }
+
+    [Fact]
+    public async Task GetEligibleAlliesAsync_WhenCoreServiceUrlConfiguredAndUnreachable_ThrowsAndFailsClosed()
+    {
+        var inMemorySettings = new Dictionary<string, string?>
+        {
+            { "CORE_SERVICE_URL", "http://127.0.0.1:54321" }
+        };
+        var config = new ConfigurationBuilder().AddInMemoryCollection(inMemorySettings).Build();
+        var repo = new PostgresAllyRepository(config, _mockLogger.Object);
+
+        var criteria = new MatchCriteria
+        {
+            TenantId = Guid.NewGuid(),
+            ZonaId = Guid.NewGuid(),
+            CategoriaId = Guid.NewGuid(),
+            Page = 1,
+            PageSize = 10,
+            CorrelationId = "test-corr-fail-closed"
+        };
+
+        await Assert.ThrowsAnyAsync<Exception>(() => repo.GetEligibleAlliesAsync(criteria));
+    }
+
+    [Fact]
+    public async Task GetSolicitudContextAsync_WhenCoreServiceUrlConfiguredAndUnreachable_ThrowsAndFailsClosed()
+    {
+        var inMemorySettings = new Dictionary<string, string?>
+        {
+            { "CORE_SERVICE_URL", "http://127.0.0.1:54321" }
+        };
+        var config = new ConfigurationBuilder().AddInMemoryCollection(inMemorySettings).Build();
+        var repo = new PostgresAllyRepository(config, _mockLogger.Object);
+
+        await Assert.ThrowsAnyAsync<Exception>(() => repo.GetSolicitudContextAsync(Guid.NewGuid(), Guid.NewGuid()));
+    }
 }
