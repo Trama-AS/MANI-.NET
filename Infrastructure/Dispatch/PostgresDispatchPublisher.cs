@@ -15,11 +15,18 @@ namespace ManiDispatch.Infrastructure.Dispatch;
 public class PostgresDispatchPublisher : IDispatchPublisher
 {
     private readonly string? _connectionString;
+    private readonly string? _coreServiceUrl;
+    private readonly HttpClient _httpClient;
     private readonly ILogger<PostgresDispatchPublisher> _logger;
 
-    public PostgresDispatchPublisher(IConfiguration configuration, ILogger<PostgresDispatchPublisher> logger)
+    public PostgresDispatchPublisher(
+        IConfiguration configuration,
+        ILogger<PostgresDispatchPublisher> logger,
+        HttpClient? httpClient = null)
     {
         _logger = logger;
+        _coreServiceUrl = configuration["CORE_SERVICE_URL"]?.TrimEnd('/');
+        _httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
         _connectionString = configuration.GetConnectionString("DefaultConnection")
                             ?? configuration["SUPABASE_DB_URL"]
                             ?? configuration["DATABASE_URL"];
@@ -27,6 +34,56 @@ public class PostgresDispatchPublisher : IDispatchPublisher
 
     public async Task PublishOfferAsync(DispatchOffer offer)
     {
+        if (!string.IsNullOrWhiteSpace(_coreServiceUrl))
+        {
+            try
+            {
+                var payloadObj = new
+                {
+                    tenantId = offer.TenantId,
+                    allyId = offer.AllyId,
+                    tipo = "OFERTA_DESPACHO",
+                    canal = "PUSH",
+                    payload = new
+                    {
+                        requestId = offer.RequestId,
+                        tenantId = offer.TenantId,
+                        allyId = offer.AllyId,
+                        allyNombre = offer.AllyNombre,
+                        estado = offer.Estado,
+                        correlationId = offer.CorrelationId,
+                        timestamp = offer.Timestamp
+                    }
+                };
+
+                using var request = new HttpRequestMessage(HttpMethod.Post, $"{_coreServiceUrl}/api/v1/notifications");
+                request.Headers.Add("X-Tenant-Id", offer.TenantId.ToString());
+                if (!string.IsNullOrWhiteSpace(offer.CorrelationId))
+                {
+                    request.Headers.Add("X-Correlation-ID", offer.CorrelationId);
+                }
+                request.Content = new StringContent(JsonSerializer.Serialize(payloadObj), System.Text.Encoding.UTF8, "application/json");
+
+                var response = await _httpClient.SendAsync(request);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _logger.LogError("Error HTTP al publicar oferta en Core Service ({StatusCode}) para aliado {AllyId} y solicitud {RequestId}.",
+                        (int)response.StatusCode, offer.AllyId, offer.RequestId);
+                    throw new HttpRequestException($"Core service returned {(int)response.StatusCode} when publishing offer for ally {offer.AllyId}.");
+                }
+
+                _logger.LogInformation(
+                    "[DISPATCH-BROADCAST] Oferta transmitida via HTTP Core para aliado {AllyId} ({AllyNombre}) sobre solicitud {RequestId} [Tenant {TenantId}, Corr {CorrelationId}].",
+                    offer.AllyId, offer.AllyNombre, offer.RequestId, offer.TenantId, offer.CorrelationId);
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Falla de comunicación HTTP con Core Service al publicar oferta.");
+                throw;
+            }
+        }
+
         if (string.IsNullOrWhiteSpace(_connectionString))
         {
             _logger.LogWarning("Cadena de conexión PostgreSQL no configurada en PostgresDispatchPublisher.");
@@ -88,8 +145,54 @@ public class PostgresDispatchPublisher : IDispatchPublisher
         }
     }
 
+    private class CoreOfferDto
+    {
+        public Guid RequestId { get; set; }
+        public Guid TenantId { get; set; }
+        public Guid AllyId { get; set; }
+        public string? AllyNombre { get; set; }
+        public string? Estado { get; set; }
+        public string? CorrelationId { get; set; }
+        public DateTime Timestamp { get; set; }
+    }
+
     public async Task<IReadOnlyList<DispatchOffer>> GetOffersByRequestAsync(Guid requestId, Guid tenantId)
     {
+        if (!string.IsNullOrWhiteSpace(_coreServiceUrl))
+        {
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, $"{_coreServiceUrl}/api/v1/notifications?requestId={requestId}&tipo=OFERTA_DESPACHO");
+                request.Headers.Add("X-Tenant-Id", tenantId.ToString());
+                var response = await _httpClient.SendAsync(request);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _logger.LogError("Error HTTP al consultar ofertas en Core Service ({StatusCode}) para solicitud {RequestId}.",
+                        (int)response.StatusCode, requestId);
+                    throw new HttpRequestException($"Core service returned {(int)response.StatusCode} when querying offers for request {requestId}.");
+                }
+
+                var content = await response.Content.ReadAsStringAsync();
+                var coreOffers = JsonSerializer.Deserialize<List<CoreOfferDto>>(content, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                if (coreOffers == null) return Array.Empty<DispatchOffer>();
+
+                return coreOffers.Select(c => new DispatchOffer(
+                    RequestId: c.RequestId != Guid.Empty ? c.RequestId : requestId,
+                    TenantId: c.TenantId != Guid.Empty ? c.TenantId : tenantId,
+                    AllyId: c.AllyId,
+                    AllyNombre: c.AllyNombre ?? string.Empty,
+                    Estado: c.Estado ?? "ENVIADA",
+                    CorrelationId: c.CorrelationId ?? string.Empty,
+                    Timestamp: c.Timestamp != default ? c.Timestamp : DateTime.UtcNow
+                )).ToList();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Falla al consultar ofertas via HTTP con Core Service para solicitud {RequestId}.", requestId);
+                throw;
+            }
+        }
+
         if (string.IsNullOrWhiteSpace(_connectionString))
         {
             return Array.Empty<DispatchOffer>();
