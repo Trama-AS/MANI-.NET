@@ -86,4 +86,40 @@ public class PostgresDispatchPublisherTests
 
         await Assert.ThrowsAnyAsync<Exception>(() => publisher.GetOffersByRequestAsync(Guid.NewGuid(), Guid.NewGuid()));
     }
+
+    [Fact]
+    public async Task PublishOfferAsync_WhenCoreServiceConfiguredAndUnreachable_ThrowsAndFailsClosed()
+    {
+        var inMemorySettings = new Dictionary<string, string?>
+        {
+            { "CORE_SERVICE_URL", "http://127.0.0.1:54321" }
+        };
+        var config = new ConfigurationBuilder().AddInMemoryCollection(inMemorySettings).Build();
+        var publisher = new PostgresDispatchPublisher(config, _mockLogger.Object);
+
+        var offer = new DispatchOffer(
+            RequestId: Guid.NewGuid(),
+            TenantId: Guid.NewGuid(),
+            AllyId: Guid.NewGuid(),
+            AllyNombre: "Test Ally",
+            Estado: "ENVIADA",
+            CorrelationId: "corr-fail-closed",
+            Timestamp: DateTime.UtcNow
+        );
+
+        await Assert.ThrowsAnyAsync<Exception>(() => publisher.PublishOfferAsync(offer));
+    }
+
+    [Fact]
+    public async Task GetOffersByRequestAsync_WhenCoreServiceConfiguredAndUnreachable_ThrowsAndFailsClosed()
+    {
+        var inMemorySettings = new Dictionary<string, string?>
+        {
+            { "CORE_SERVICE_URL", "http://127.0.0.1:54321" }
+        };
+        var config = new ConfigurationBuilder().AddInMemoryCollection(inMemorySettings).Build();
+        var publisher = new PostgresDispatchPublisher(config, _mockLogger.Object);
+
+        await Assert.ThrowsAnyAsync<Exception>(() => publisher.GetOffersByRequestAsync(Guid.NewGuid(), Guid.NewGuid()));
+    }
 }
