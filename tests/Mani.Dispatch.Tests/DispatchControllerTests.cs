@@ -500,6 +500,22 @@ public class DispatchControllerTests
         var result = _controller.HealthCheck();
         var okResult = Assert.IsType<OkObjectResult>(result);
         Assert.Equal(200, okResult.StatusCode);
+
+        // Prueba de humo de QA-06 (SCRUM-1123): estado, nombre del servicio y eco del correlation id.
+        using var json = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(okResult.Value));
+        Assert.Equal("UP", json.RootElement.GetProperty("status").GetString());
+        Assert.Equal("MANI-Dispatch-DotNet", json.RootElement.GetProperty("service").GetString());
+        Assert.Equal("test-corr-id", json.RootElement.GetProperty("correlationId").GetString());
+    }
+
+    [Fact]
+    public void HealthCheck_WithoutCorrelationId_StillReturnsOk()
+    {
+        _controller.HttpContext.Request.Headers.Remove("X-Correlation-ID");
+
+        var result = _controller.HealthCheck();
+
+        Assert.IsType<OkObjectResult>(result);
     }
 
     [Fact]
