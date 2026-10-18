@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Dapper;
+using System.Net.Http;
+using System.Text.Json;
 using ManiDispatch.Application.Interfaces;
 using ManiDispatch.Domain.Entities;
 using Microsoft.Extensions.Configuration;
@@ -11,14 +13,22 @@ using Npgsql;
 
 namespace ManiDispatch.Infrastructure.Repositories;
 
+public class CoreEligibleResponse
+{
+    public IEnumerable<Ally>? Allies { get; set; }
+    public int TotalCount { get; set; }
+}
+
 public class PostgresAllyRepository : IAllyRepository
 {
     private readonly string? _connectionString;
+    private readonly string? _coreServiceUrl;
     private readonly ILogger<PostgresAllyRepository> _logger;
 
     public PostgresAllyRepository(IConfiguration configuration, ILogger<PostgresAllyRepository> logger)
     {
         _logger = logger;
+        _coreServiceUrl = configuration["CORE_SERVICE_URL"];
         _connectionString = configuration.GetConnectionString("DefaultConnection")
                             ?? configuration["SUPABASE_DB_URL"]
                             ?? configuration["DATABASE_URL"];
@@ -26,6 +36,43 @@ public class PostgresAllyRepository : IAllyRepository
 
     public async Task<(IEnumerable<Ally> Allies, int TotalCount)> GetEligibleAlliesAsync(MatchCriteria criteria)
     {
+        // ADR-0030: si CORE_SERVICE_URL está configurada, se cruza la frontera de datos por HTTP hacia Core
+        if (!string.IsNullOrWhiteSpace(_coreServiceUrl))
+        {
+            try
+            {
+                using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+                var url = $"{_coreServiceUrl.TrimEnd('/')}/api/v1/allies/eligible?categoriaId={criteria.CategoriaId}&zonaId={criteria.ZonaId}&page={criteria.Page}&pageSize={criteria.PageSize}";
+                if (criteria.RequestId.HasValue)
+                {
+                    url += $"&requestId={criteria.RequestId.Value}";
+                }
+
+                using var req = new HttpRequestMessage(HttpMethod.Get, url);
+                req.Headers.Add("X-Tenant-Id", criteria.TenantId.ToString());
+                if (!string.IsNullOrWhiteSpace(criteria.CorrelationId))
+                {
+                    req.Headers.Add("X-Correlation-ID", criteria.CorrelationId);
+                }
+
+                var response = await httpClient.SendAsync(req);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _logger.LogError("Core service respondió {StatusCode} al consultar elegibilidad de aliados.", response.StatusCode);
+                    throw new HttpRequestException($"Error consultando elegibilidad en Core service: {response.StatusCode}");
+                }
+
+                var json = await response.Content.ReadAsStringAsync();
+                var result = JsonSerializer.Deserialize<CoreEligibleResponse>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                return (result?.Allies ?? Enumerable.Empty<Ally>(), result?.TotalCount ?? 0);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Fallo de conexión o timeout consultando elegibilidad hacia Core service.");
+                throw;
+            }
+        }
+
         if (string.IsNullOrWhiteSpace(_connectionString))
         {
             _logger.LogWarning("Cadena de conexión PostgreSQL no configurada en PostgresAllyRepository.");
@@ -53,7 +100,13 @@ public class PostgresAllyRepository : IAllyRepository
                 INNER JOIN zona z ON z.id = ca.zona_id AND z.estado = 'activa'
                 WHERE a.tenant_id = @TenantId
                   AND ac.categoria_id = @CategoriaId
-                  AND (a.estado_verificacion = 'VERIFICADO' OR a.estado_verificacion = 'aprobado')
+                  AND a.estado_verificacion = 'VERIFICADO'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM aliado_ausencia aa
+                      WHERE aa.aliado_id = a.id
+                        AND aa.tenant_id = a.tenant_id
+                        AND CURRENT_DATE BETWEEN aa.fecha_inicio AND aa.fecha_fin
+                  )
                   AND (@RequestId IS NULL OR NOT EXISTS (
                       SELECT 1 FROM solicitud_rechazo r
                       WHERE r.solicitud_id = @RequestId AND r.aliado_id = a.id
@@ -79,7 +132,13 @@ public class PostgresAllyRepository : IAllyRepository
                 INNER JOIN zona z ON z.id = ca.zona_id AND z.estado = 'activa'
                 WHERE a.tenant_id = @TenantId
                   AND ac.categoria_id = @CategoriaId
-                  AND (a.estado_verificacion = 'VERIFICADO' OR a.estado_verificacion = 'aprobado')
+                  AND a.estado_verificacion = 'VERIFICADO'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM aliado_ausencia aa
+                      WHERE aa.aliado_id = a.id
+                        AND aa.tenant_id = a.tenant_id
+                        AND CURRENT_DATE BETWEEN aa.fecha_inicio AND aa.fecha_fin
+                  )
                   AND (@RequestId IS NULL OR NOT EXISTS (
                       SELECT 1 FROM solicitud_rechazo r
                       WHERE r.solicitud_id = @RequestId AND r.aliado_id = a.id
@@ -114,6 +173,36 @@ public class PostgresAllyRepository : IAllyRepository
 
     public async Task<SolicitudContext?> GetSolicitudContextAsync(Guid requestId, Guid tenantId)
     {
+        if (!string.IsNullOrWhiteSpace(_coreServiceUrl))
+        {
+            try
+            {
+                using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+                var url = $"{_coreServiceUrl.TrimEnd('/')}/api/v1/solicitudes/{requestId}/context";
+                using var req = new HttpRequestMessage(HttpMethod.Get, url);
+                req.Headers.Add("X-Tenant-Id", tenantId.ToString());
+
+                var response = await httpClient.SendAsync(req);
+                if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                {
+                    return null;
+                }
+                if (!response.IsSuccessStatusCode)
+                {
+                    _logger.LogError("Core service respondió {StatusCode} al consultar contexto de solicitud {RequestId}.", response.StatusCode, requestId);
+                    throw new HttpRequestException($"Error consultando contexto de solicitud en Core: {response.StatusCode}");
+                }
+
+                var json = await response.Content.ReadAsStringAsync();
+                return JsonSerializer.Deserialize<SolicitudContext>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Fallo consultando contexto de solicitud hacia Core service.");
+                throw;
+            }
+        }
+
         if (string.IsNullOrWhiteSpace(_connectionString))
         {
             _logger.LogWarning("Cadena de conexión PostgreSQL no configurada en PostgresAllyRepository.");
