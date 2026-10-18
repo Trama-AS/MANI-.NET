@@ -6,7 +6,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>Mani.Dispatch</RootNamespace>
     <AssemblyName>Mani.Dispatch</AssemblyName>
-    <DefaultItemExcludes>ManiDispatch.Tests\**;$(DefaultItemExcludes)</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>

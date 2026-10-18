@@ -5,7 +5,7 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ManiDispatch", "ManiDispatch.csproj", "{F716D8FF-847E-4A0D-AD87-554DFB88453C}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ManiDispatch.Tests", "ManiDispatch.Tests\ManiDispatch.Tests.csproj", "{C9B981CE-D41B-4C84-8D7B-5CA15FD21AE9}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Mani.Dispatch.Tests", "tests\Mani.Dispatch.Tests\Mani.Dispatch.Tests.csproj", "{C9B981CE-D41B-4C84-8D7B-5CA15FD21AE9}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{7578CD4F-B00E-4719-A856-1694231623F1}"
 EndProject
