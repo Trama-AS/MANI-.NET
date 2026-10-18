@@ -1,10 +1,14 @@
 name: CI
 
+# Ejecuta las pruebas unitarias y genera el reporte de cobertura (QA-06 / SCRUM-1123).
+# El análisis de SonarQube y su Quality Gate se conectan a este reporte; el proyecto en
+# SonarCloud y su token los crea DevOps (no se incluyen aquí).
+
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
 
 permissions:
   contents: read
@@ -29,4 +33,15 @@ jobs:
         run: dotnet build ManiDispatch.sln --no-restore --configuration Release
 
       - name: Run unit & integration tests
-        run: dotnet test ManiDispatch.sln --no-build --configuration Release --verbosity normal
+        run: >
+          dotnet test ManiDispatch.sln --no-build --configuration Release
+          --collect:"XPlat Code Coverage" --results-directory ./TestResults
+          -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
+
+      - name: Publicar reporte de cobertura
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-opencover
+          path: TestResults/**/coverage.opencover.xml
+          if-no-files-found: warn
