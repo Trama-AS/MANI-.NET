@@ -8,4 +8,4 @@ obj/
 *.log
 .env
 TestResults/
-
+coverage/

@@ -18,9 +18,13 @@ public class DispatchController : ControllerBase
     private static readonly ConcurrentDictionary<string, string> AcceptedRequests = new();
     private readonly GetEligibleAlliesUseCase _getEligibleAlliesUseCase;
 
+    public DispatchController() : this(null!)
+    {
+    }
+
     public DispatchController(GetEligibleAlliesUseCase getEligibleAlliesUseCase)
     {
-        _getEligibleAlliesUseCase = getEligibleAlliesUseCase ?? throw new ArgumentNullException(nameof(getEligibleAlliesUseCase));
+        _getEligibleAlliesUseCase = getEligibleAlliesUseCase;
     }
 
     [HttpGet("health")]

@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+      - release
+      - develop
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+*'
   workflow_dispatch:
@@ -42,6 +44,8 @@ jobs:
             ${{ env.REGISTRY }}/${{ github.repository_owner }}/mani-net
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=staging,enable=${{ github.ref == 'refs/heads/release' }}
+            type=raw,value=develop,enable=${{ github.ref == 'refs/heads/develop' }}
             type=ref,event=branch
             type=sha,format=short,prefix=sha-
             type=semver,pattern={{version}}
