@@ -116,9 +116,10 @@ public static class JwtAuthHelper
         {
             return new AuthResult(false, null, null, null, "Firma del token JWT inválida.");
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            return new AuthResult(false, null, null, null, $"Error al validar el token de autenticación: {ex.Message}");
+            // No se expone el detalle de la excepción al cliente: solo se informa que el token no es válido.
+            return new AuthResult(false, null, null, null, "Error de autenticación: el token es inválido o tiene un formato incorrecto.");
         }
     }
 }

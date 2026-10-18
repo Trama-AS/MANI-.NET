@@ -389,12 +389,11 @@ public class DispatchController : ControllerBase
                 timestamp = DateTime.UtcNow.ToString("o")
             });
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new
             {
                 error = "No es posible confirmar la aceptación de la solicitud por indisponibilidad de la base de datos (ADR-0016).",
-                detail = ex.Message,
                 code = "DATABASE_UNAVAILABLE",
                 status = StatusCodes.Status503ServiceUnavailable,
                 correlationId,
@@ -481,12 +480,11 @@ public class DispatchController : ControllerBase
                 timestamp = DateTime.UtcNow.ToString("o")
             });
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new
             {
                 error = "No es posible registrar el rechazo de la solicitud por indisponibilidad de la base de datos (ADR-0016).",
-                detail = ex.Message,
                 code = "DATABASE_UNAVAILABLE",
                 status = StatusCodes.Status503ServiceUnavailable,
                 correlationId,
