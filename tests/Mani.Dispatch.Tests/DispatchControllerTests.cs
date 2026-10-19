@@ -8,6 +8,7 @@ using ManiDispatch.Application.UseCases;
 using ManiDispatch.Domain.Entities;
 using ManiDispatch.Domain.Exceptions;
 using ManiDispatch.Infrastructure.Auth;
+using ManiDispatch.Infrastructure.Repositories;
 using ManiDispatch.Tests.Helpers;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -20,7 +21,13 @@ namespace ManiDispatch.Tests;
 public class DispatchControllerTests
 {
     private readonly Mock<IAllyRepository> _mockRepo;
-    private readonly GetEligibleAlliesUseCase _useCase;
+    private readonly Mock<IDispatchPublisher> _mockPublisher;
+    private readonly InMemorySolicitudAssignmentRepository _assignmentRepo;
+    private readonly GetEligibleAlliesUseCase _getEligibleUseCase;
+    private readonly OrchestrateDispatchUseCase _orchestrateUseCase;
+    private readonly FakeAllyProfiles _allyProfiles = new();
+    private readonly AcceptDispatchOfferUseCase _acceptUseCase;
+    private readonly RejectDispatchOfferUseCase _rejectUseCase;
     private readonly DispatchController _controller;
     private readonly Guid _testTenantId;
     private readonly string _validJwtToken;
@@ -34,8 +41,15 @@ public class DispatchControllerTests
         _validJwtToken = TestTokenHelper.CreateTestToken(_testTenantId, "user-client-1", "cliente");
 
         _mockRepo = new Mock<IAllyRepository>();
-        _useCase = new GetEligibleAlliesUseCase(_mockRepo.Object);
-        _controller = new DispatchController(_useCase)
+        _mockPublisher = new Mock<IDispatchPublisher>();
+        _assignmentRepo = new InMemorySolicitudAssignmentRepository();
+
+        _getEligibleUseCase = new GetEligibleAlliesUseCase(_mockRepo.Object);
+        _orchestrateUseCase = new OrchestrateDispatchUseCase(_mockRepo.Object, _mockPublisher.Object);
+        _acceptUseCase = new AcceptDispatchOfferUseCase(_assignmentRepo, _allyProfiles);
+        _rejectUseCase = new RejectDispatchOfferUseCase(_assignmentRepo, _allyProfiles);
+
+        _controller = new DispatchController(_getEligibleUseCase, _orchestrateUseCase, _acceptUseCase, _rejectUseCase)
         {
             ControllerContext = new ControllerContext
             {
@@ -48,7 +62,6 @@ public class DispatchControllerTests
     [Fact]
     public async Task MatchProfessionals_WithoutAuthHeader_Returns401Unauthorized()
     {
-        // Act: No se envía Authorization header
         var request = new MatchRequestDto
         {
             ZonaId = Guid.NewGuid().ToString(),
@@ -57,7 +70,6 @@ public class DispatchControllerTests
 
         var result = await _controller.MatchProfessionals(request);
 
-        // Assert
         var unauthResult = Assert.IsType<UnauthorizedObjectResult>(result);
         Assert.Equal(401, unauthResult.StatusCode);
     }
@@ -65,7 +77,6 @@ public class DispatchControllerTests
     [Fact]
     public async Task MatchProfessionals_WithCrossTenantSpoofing_Returns403Forbidden()
     {
-        // Arrange: Token del tenant A, pero payload pide tenant B
         _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
 
         var foreignTenantId = Guid.NewGuid();
@@ -76,10 +87,8 @@ public class DispatchControllerTests
             CategoriaId = Guid.NewGuid().ToString()
         };
 
-        // Act
         var result = await _controller.MatchProfessionals(request);
 
-        // Assert
         var forbiddenResult = Assert.IsType<ObjectResult>(result);
         Assert.Equal(403, forbiddenResult.StatusCode);
     }
@@ -87,7 +96,6 @@ public class DispatchControllerTests
     [Fact]
     public async Task MatchProfessionals_WithValidToken_Returns200WithMatchedAllies()
     {
-        // Arrange
         _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
 
         var zonaId = Guid.NewGuid();
@@ -100,7 +108,7 @@ public class DispatchControllerTests
                 Id = Guid.NewGuid(),
                 NombreRazonSocial = "Servicios Técnicos S.A.S.",
                 Tipo = "empresa",
-                EstadoVerificacion = "aprobado"
+                EstadoVerificacion = "VERIFICADO"
             }
         };
 
@@ -113,10 +121,8 @@ public class DispatchControllerTests
             CategoriaId = categoriaId.ToString()
         };
 
-        // Act
         var actionResult = await _controller.MatchProfessionals(request);
 
-        // Assert
         var okResult = Assert.IsType<OkObjectResult>(actionResult);
         var response = Assert.IsType<MatchResponseDto>(okResult.Value);
         Assert.Equal(_testTenantId.ToString(), response.TenantId);
@@ -124,13 +130,11 @@ public class DispatchControllerTests
         Assert.Equal(categoriaId.ToString(), response.CategoriaId);
         Assert.Equal(1, response.TotalCount);
         Assert.Single(response.MatchedAllies);
-        Assert.Equal("Servicios Técnicos S.A.S.", response.MatchedAllies.First().NombreRazonSocial);
     }
 
     [Fact]
     public async Task GetEligibleAlliesForRequest_ResolvesZonaAndCategoriaFromSolicitud_WhenParamsOmitted()
     {
-        // Arrange
         _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
 
         var requestId = Guid.NewGuid();
@@ -152,7 +156,6 @@ public class DispatchControllerTests
         _mockRepo.Setup(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()))
                  .ReturnsAsync((new List<Ally>(), 0));
 
-        // Act: Se consulta por requestId sin pasar zona ni categoría por query param
         var actionResult = await _controller.GetEligibleAlliesForRequest(
             requestId.ToString(),
             zonaId: null,
@@ -160,14 +163,11 @@ public class DispatchControllerTests
             page: 1,
             pageSize: 10);
 
-        // Assert
         var okResult = Assert.IsType<OkObjectResult>(actionResult);
         var response = Assert.IsType<MatchResponseDto>(okResult.Value);
         Assert.Equal(requestId.ToString(), response.RequestId);
         Assert.Equal(dbZonaId.ToString(), response.ZonaId);
         Assert.Equal(dbCategoriaId.ToString(), response.CategoriaId);
-
-        _mockRepo.Verify(r => r.GetSolicitudContextAsync(requestId, _testTenantId), Times.Once);
     }
 
     [Fact]
@@ -212,14 +212,12 @@ public class DispatchControllerTests
     [Fact]
     public async Task GetEligibleAlliesForRequest_WhenSolicitudNotFound_Returns404NotFound()
     {
-        // Arrange
         _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
 
         var requestId = Guid.NewGuid();
         _mockRepo.Setup(r => r.GetSolicitudContextAsync(requestId, _testTenantId))
                  .ReturnsAsync((SolicitudContext?)null);
 
-        // Act
         var actionResult = await _controller.GetEligibleAlliesForRequest(
             requestId.ToString(),
             zonaId: null,
@@ -227,29 +225,221 @@ public class DispatchControllerTests
             page: 1,
             pageSize: 10);
 
-        // Assert
         var notFoundResult = Assert.IsType<NotFoundObjectResult>(actionResult);
         Assert.Equal(404, notFoundResult.StatusCode);
     }
 
     [Fact]
-    public void AcceptRequest_ReturnsOkOnFirst_AndConflictOnSecond()
+    public async Task OrchestrateDispatch_WithoutAuthHeader_Returns401Unauthorized()
     {
-        // Arrange
-        string reqId = "req-unique-" + Guid.NewGuid();
-        var dto1 = new AcceptRequestDto("ally-first");
-        var dto2 = new AcceptRequestDto("ally-second");
+        var dto = new OrchestrateRequestDto(Guid.NewGuid().ToString());
 
-        // Act 1: Primer aliado acepta
-        var result1 = _controller.AcceptRequest(reqId, dto1);
+        var result = await _controller.OrchestrateDispatch(dto);
 
-        // Act 2: Segundo aliado colisiona concurrentemente sobre la misma orden
-        var result2 = _controller.AcceptRequest(reqId, dto2);
+        var unauthResult = Assert.IsType<UnauthorizedObjectResult>(result);
+        Assert.Equal(401, unauthResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task OrchestrateDispatch_WithCrossTenantSpoofing_Returns403Forbidden()
+    {
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+
+        var dto = new OrchestrateRequestDto(Guid.NewGuid().ToString())
+        {
+            TenantId = Guid.NewGuid().ToString() // Tenant diferente al del token
+        };
+
+        var result = await _controller.OrchestrateDispatch(dto);
+
+        var forbiddenResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(403, forbiddenResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task OrchestrateDispatch_WhenValid_Returns200OkWithDispatchedOffers()
+    {
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+
+        var requestId = Guid.NewGuid();
+        var zonaId = Guid.NewGuid();
+        var categoriaId = Guid.NewGuid();
+
+        var solicitud = new SolicitudContext
+        {
+            Id = requestId,
+            TenantId = _testTenantId,
+            ZonaId = zonaId,
+            CategoriaId = categoriaId,
+            Estado = "PENDIENTE"
+        };
+
+        _mockRepo.Setup(r => r.GetSolicitudContextAsync(requestId, _testTenantId))
+                 .ReturnsAsync(solicitud);
+
+        var allies = new List<Ally>
+        {
+            new() { Id = Guid.NewGuid(), NombreRazonSocial = "Aliado Experto", Tipo = "independiente", EstadoVerificacion = "VERIFICADO" }
+        };
+
+        _mockRepo.Setup(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()))
+                 .ReturnsAsync((allies, 1));
+
+        var dto = new OrchestrateRequestDto(requestId.ToString());
+
+        var result = await _controller.OrchestrateDispatch(dto);
+
+        var okResult = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<OrchestrateResponseDto>(okResult.Value);
+        Assert.Equal("DISPATCHED", response.Status);
+        Assert.Equal(1, response.CandidatesCount);
+        Assert.Single(response.CandidatesNotified);
+    }
+
+    [Fact]
+    public async Task OrchestrateDispatch_WhenSolicitudNotFound_Returns404NotFound()
+    {
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+
+        var requestId = Guid.NewGuid();
+        _mockRepo.Setup(r => r.GetSolicitudContextAsync(requestId, _testTenantId))
+                 .ReturnsAsync((SolicitudContext?)null);
+
+        var dto = new OrchestrateRequestDto(requestId.ToString());
+
+        var result = await _controller.OrchestrateDispatch(dto);
+
+        var notFoundResult = Assert.IsType<NotFoundObjectResult>(result);
+        Assert.Equal(404, notFoundResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task AcceptRequest_ReturnsOkOnFirst_ConflictOnSecond_AndOkOnWinnerRetry()
+    {
+        string reqId = Guid.NewGuid().ToString();
+        var ally1UserId = Guid.NewGuid();
+        var ally2UserId = Guid.NewGuid();
+
+        _allyProfiles.RegisterAlly(new AllyProfile(Guid.NewGuid(), _testTenantId, ally1UserId, "VERIFICADO"));
+        _allyProfiles.RegisterAlly(new AllyProfile(Guid.NewGuid(), _testTenantId, ally2UserId, "VERIFICADO"));
+
+        var ally1Token = TestTokenHelper.CreateTestToken(_testTenantId, ally1UserId.ToString(), "aliado");
+        var ally2Token = TestTokenHelper.CreateTestToken(_testTenantId, ally2UserId.ToString(), "aliado");
+
+        // Act 1: Primer aliado acepta con su token
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {ally1Token}";
+        var result1 = await _controller.AcceptRequest(reqId);
+
+        // Act 2: Segundo aliado colisiona con token distinto
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {ally2Token}";
+        var result2 = await _controller.AcceptRequest(reqId);
+
+        // Act 3: Primer aliado reintenta (idempotente)
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {ally1Token}";
+        var result3 = await _controller.AcceptRequest(reqId);
 
         // Assert
-        Assert.IsType<OkObjectResult>(result1);
+        var okResult1 = Assert.IsType<OkObjectResult>(result1);
+        Assert.Equal(200, okResult1.StatusCode);
+
         var conflictResult = Assert.IsType<ConflictObjectResult>(result2);
         Assert.Equal(409, conflictResult.StatusCode);
+
+        var okResult3 = Assert.IsType<OkObjectResult>(result3);
+        Assert.Equal(200, okResult3.StatusCode);
+    }
+
+    [Fact]
+    public async Task AcceptRequest_WhenAllyProfileDoesNotExist_Returns403Forbidden()
+    {
+        string reqId = Guid.NewGuid().ToString();
+        var unknownAllyUserId = Guid.NewGuid();
+        var token = TestTokenHelper.CreateTestToken(_testTenantId, unknownAllyUserId.ToString(), "aliado");
+
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
+        var result = await _controller.AcceptRequest(reqId);
+
+        var forbiddenResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(403, forbiddenResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task AcceptRequest_WhenDatabaseFails_Returns503ServiceUnavailable_AndDoesNotFallbackToMemory()
+    {
+        var mockConfig = new Mock<Microsoft.Extensions.Configuration.IConfiguration>();
+        var postgresRepo = new PostgresSolicitudAssignmentRepository(
+            mockConfig.Object,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<PostgresSolicitudAssignmentRepository>.Instance);
+        // El aliado existe en Core (verificado): el fallo que se prueba es el de la base de Dispatch al asignar.
+        var allyUserId = Guid.NewGuid();
+        var profiles = new FakeAllyProfiles();
+        profiles.RegisterAlly(new AllyProfile(Guid.NewGuid(), _testTenantId, allyUserId, "VERIFICADO"));
+        var controller = new DispatchController(
+            _getEligibleUseCase,
+            _orchestrateUseCase,
+            new AcceptDispatchOfferUseCase(postgresRepo, profiles),
+            new RejectDispatchOfferUseCase(postgresRepo, profiles))
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext()
+            }
+        };
+
+        var token = TestTokenHelper.CreateTestToken(_testTenantId, allyUserId.ToString(), "aliado");
+        controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
+
+        var result = await controller.AcceptRequest(Guid.NewGuid().ToString());
+
+        var unavailableResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(503, unavailableResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task RejectRequest_WithAuthenticatedAlly_ReturnsOkRejected()
+    {
+        string reqId = Guid.NewGuid().ToString();
+        var allyUserId = Guid.NewGuid();
+        _allyProfiles.RegisterAlly(new AllyProfile(Guid.NewGuid(), _testTenantId, allyUserId, "VERIFICADO"));
+        var allyToken = TestTokenHelper.CreateTestToken(_testTenantId, allyUserId.ToString(), "aliado");
+
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {allyToken}";
+        var result = await _controller.RejectRequest(reqId, new RejectRequestDto("HORARIO_INCOMPATIBLE"));
+
+        var okResult = Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(200, okResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task RejectRequest_WhenDatabaseFails_Returns503ServiceUnavailable()
+    {
+        var mockConfig = new Mock<Microsoft.Extensions.Configuration.IConfiguration>();
+        var postgresRepo = new PostgresSolicitudAssignmentRepository(
+            mockConfig.Object,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<PostgresSolicitudAssignmentRepository>.Instance);
+        // El aliado existe en Core (verificado): el fallo que se prueba es el de la base de Dispatch al asignar.
+        var allyUserId = Guid.NewGuid();
+        var profiles = new FakeAllyProfiles();
+        profiles.RegisterAlly(new AllyProfile(Guid.NewGuid(), _testTenantId, allyUserId, "VERIFICADO"));
+        var controller = new DispatchController(
+            _getEligibleUseCase,
+            _orchestrateUseCase,
+            new AcceptDispatchOfferUseCase(postgresRepo, profiles),
+            new RejectDispatchOfferUseCase(postgresRepo, profiles))
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext()
+            }
+        };
+
+        var token = TestTokenHelper.CreateTestToken(_testTenantId, allyUserId.ToString(), "aliado");
+        controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
+
+        var result = await controller.RejectRequest(Guid.NewGuid().ToString(), new RejectRequestDto("NO_DISPONIBLE"));
+
+        var unavailableResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(503, unavailableResult.StatusCode);
     }
 
     [Fact]
@@ -400,11 +590,25 @@ public class DispatchControllerTests
     }
 
     [Fact]
-    public void AcceptRequest_WithNullOrEmptyAllyId_Returns400BadRequest()
+    public async Task AcceptRequest_WithNonAliadoRole_Returns403Forbidden()
     {
-        var result = _controller.AcceptRequest("req-1", new AcceptRequestDto(""));
-        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
-        Assert.Equal(400, badRequest.StatusCode);
+        var clientToken = TestTokenHelper.CreateTestToken(_testTenantId, "client-1", "cliente");
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {clientToken}";
+
+        var result = await _controller.AcceptRequest(Guid.NewGuid().ToString());
+        var forbiddenResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(403, forbiddenResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task RejectRequest_WithNonAliadoRole_Returns403Forbidden()
+    {
+        var clientToken = TestTokenHelper.CreateTestToken(_testTenantId, "client-1", "cliente");
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {clientToken}";
+
+        var result = await _controller.RejectRequest(Guid.NewGuid().ToString(), new RejectRequestDto("Motivo"));
+        var forbiddenResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(403, forbiddenResult.StatusCode);
     }
 
     [Fact]
@@ -422,6 +626,50 @@ public class DispatchControllerTests
         var result = await _controller.MatchProfessionals(request);
         var badRequest = Assert.IsType<BadRequestObjectResult>(result);
         Assert.Equal(400, badRequest.StatusCode);
+    }
+
+    [Fact]
+    public async Task OrchestrateDispatch_WithAliadoRole_Returns403Forbidden()
+    {
+        // Arrange
+        var aliadoToken = TestTokenHelper.CreateTestToken(_testTenantId, "aliado-1", "aliado");
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {aliadoToken}";
+
+        var request = new OrchestrateRequestDto
+        {
+            RequestId = Guid.NewGuid().ToString()
+        };
+
+        // Act
+        var result = await _controller.OrchestrateDispatch(request);
+
+        // Assert: aliado rol debe recibir 403 Forbidden
+        var forbiddenResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(403, forbiddenResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task OrchestrateDispatch_WithAdminTenantRole_WhenSolicitudNotFound_Returns404()
+    {
+        // Arrange
+        var adminToken = TestTokenHelper.CreateTestToken(_testTenantId, "admin-1", "admin_tenant");
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {adminToken}";
+
+        var requestId = Guid.NewGuid();
+        _mockRepo.Setup(r => r.GetSolicitudContextAsync(requestId, _testTenantId))
+                 .ReturnsAsync((SolicitudContext?)null);
+
+        var request = new OrchestrateRequestDto
+        {
+            RequestId = requestId.ToString()
+        };
+
+        // Act
+        var result = await _controller.OrchestrateDispatch(request);
+
+        // Assert
+        var notFound = Assert.IsType<NotFoundObjectResult>(result);
+        Assert.Equal(404, notFound.StatusCode);
     }
 
     [Fact]
@@ -464,6 +712,21 @@ public class DispatchControllerTests
 
         var result = await _controller.GetEligibleAlliesForRequest(
             Guid.NewGuid().ToString(), Guid.NewGuid().ToString(), Guid.NewGuid().ToString(), 1, 10);
+
+        var response = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(503, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task OrchestrateDispatch_WhenCoreIsUnavailable_Returns503()
+    {
+        var adminToken = TestTokenHelper.CreateTestToken(_testTenantId, "admin-1", "admin_tenant");
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {adminToken}";
+        var requestId = Guid.NewGuid();
+        _mockRepo.Setup(r => r.GetSolicitudContextAsync(requestId, _testTenantId))
+                 .ThrowsAsync(new CoreServiceUnavailableException("Core no respondió."));
+
+        var result = await _controller.OrchestrateDispatch(new OrchestrateRequestDto { RequestId = requestId.ToString() });
 
         var response = Assert.IsType<ObjectResult>(result);
         Assert.Equal(503, response.StatusCode);

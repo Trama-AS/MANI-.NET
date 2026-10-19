@@ -2,6 +2,8 @@ using System.Text.Json;
 using ManiDispatch.Application.Interfaces;
 using ManiDispatch.Application.UseCases;
 using ManiDispatch.Infrastructure.Core;
+using ManiDispatch.Infrastructure.Dispatch;
+using ManiDispatch.Infrastructure.Repositories;
 
 // Cargar variables de entorno si existe .env
 DotNetEnv.Env.Load();
@@ -28,7 +30,13 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddTransient<ForwardAuthorizationHandler>();
 builder.Services.AddHttpClient<IAllyRepository, CoreAllyClient>(client => client.Timeout = TimeSpan.FromSeconds(3))
     .AddHttpMessageHandler<ForwardAuthorizationHandler>();
+builder.Services.AddHttpClient<IDispatchPublisher, CoreDispatchPublisher>(client => client.Timeout = TimeSpan.FromSeconds(3))
+    .AddHttpMessageHandler<ForwardAuthorizationHandler>();
+builder.Services.AddScoped<ISolicitudAssignmentRepository, PostgresSolicitudAssignmentRepository>();
 builder.Services.AddScoped<GetEligibleAlliesUseCase>();
+builder.Services.AddScoped<OrchestrateDispatchUseCase>();
+builder.Services.AddScoped<AcceptDispatchOfferUseCase>();
+builder.Services.AddScoped<RejectDispatchOfferUseCase>();
 
 var app = builder.Build();
 
@@ -43,19 +51,6 @@ app.Use(async (context, next) =>
     }
     context.Response.Headers["X-Correlation-ID"] = correlationId;
     await next();
-});
-
-// Endpoint de Healthcheck rápido
-app.MapGet("/health", (HttpContext ctx) =>
-{
-    var correlationId = ctx.Response.Headers["X-Correlation-ID"].ToString();
-    return Results.Ok(new
-    {
-        status = "UP",
-        service = "MANI-Dispatch-DotNet",
-        timestamp = DateTime.UtcNow.ToString("o"),
-        correlationId
-    });
 });
 
 app.MapControllers();
