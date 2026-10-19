@@ -105,7 +105,7 @@ public class PostgresAllyRepository : IAllyRepository
                       SELECT 1 FROM aliado_ausencia aa
                       WHERE aa.aliado_id = a.id
                         AND aa.tenant_id = a.tenant_id
-                        AND CURRENT_DATE BETWEEN aa.fecha_inicio AND aa.fecha_fin
+                        AND aa.inicio <= now() AND aa.fin > now()
                   )
                   AND (@RequestId IS NULL OR NOT EXISTS (
                       SELECT 1 FROM solicitud_rechazo r
@@ -137,7 +137,7 @@ public class PostgresAllyRepository : IAllyRepository
                       SELECT 1 FROM aliado_ausencia aa
                       WHERE aa.aliado_id = a.id
                         AND aa.tenant_id = a.tenant_id
-                        AND CURRENT_DATE BETWEEN aa.fecha_inicio AND aa.fecha_fin
+                        AND aa.inicio <= now() AND aa.fin > now()
                   )
                   AND (@RequestId IS NULL OR NOT EXISTS (
                       SELECT 1 FROM solicitud_rechazo r
