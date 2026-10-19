@@ -14,6 +14,11 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
     <PackageReference Include="coverlet.collector" Version="6.0.2" />
     <PackageReference Include="Moq" Version="4.20.70" />
+    <PackageReference Include="Testcontainers.PostgreSql" Version="3.10.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="Database/migrations/*.sql" CopyToOutputDirectory="PreserveNewest" LinkBase="Database/migrations" />
   </ItemGroup>
 
   <ItemGroup>
