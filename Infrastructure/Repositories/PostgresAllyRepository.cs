@@ -47,6 +47,10 @@ public class PostgresAllyRepository : IAllyRepository
                 {
                     url += $"&requestId={criteria.RequestId.Value}";
                 }
+                if (!string.IsNullOrWhiteSpace(criteria.Tipo))
+                {
+                    url += $"&tipo={Uri.EscapeDataString(criteria.Tipo)}";
+                }
 
                 using var req = new HttpRequestMessage(HttpMethod.Get, url);
                 req.Headers.Add("X-Tenant-Id", criteria.TenantId.ToString());
@@ -101,11 +105,13 @@ public class PostgresAllyRepository : IAllyRepository
                 WHERE a.tenant_id = @TenantId
                   AND ac.categoria_id = @CategoriaId
                   AND a.estado_verificacion = 'VERIFICADO'
+                  AND (@Tipo::text IS NULL OR a.tipo = @Tipo::text)
                   AND NOT EXISTS (
                       SELECT 1 FROM aliado_ausencia aa
                       WHERE aa.aliado_id = a.id
                         AND aa.tenant_id = a.tenant_id
-                        AND CURRENT_DATE BETWEEN aa.fecha_inicio AND aa.fecha_fin
+                        AND aa.inicio <= now()
+                        AND aa.fin > now()
                   )
                   AND (@RequestId IS NULL OR NOT EXISTS (
                       SELECT 1 FROM solicitud_rechazo r
@@ -133,11 +139,13 @@ public class PostgresAllyRepository : IAllyRepository
                 WHERE a.tenant_id = @TenantId
                   AND ac.categoria_id = @CategoriaId
                   AND a.estado_verificacion = 'VERIFICADO'
+                  AND (@Tipo::text IS NULL OR a.tipo = @Tipo::text)
                   AND NOT EXISTS (
                       SELECT 1 FROM aliado_ausencia aa
                       WHERE aa.aliado_id = a.id
                         AND aa.tenant_id = a.tenant_id
-                        AND CURRENT_DATE BETWEEN aa.fecha_inicio AND aa.fecha_fin
+                        AND aa.inicio <= now()
+                        AND aa.fin > now()
                   )
                   AND (@RequestId IS NULL OR NOT EXISTS (
                       SELECT 1 FROM solicitud_rechazo r
@@ -155,6 +163,7 @@ public class PostgresAllyRepository : IAllyRepository
                 RequestId = criteria.RequestId,
                 ZonaId = criteria.ZonaId,
                 CategoriaId = criteria.CategoriaId,
+                Tipo = criteria.Tipo,
                 Offset = offset,
                 Limit = limit
             };
