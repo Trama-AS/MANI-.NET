@@ -165,8 +165,8 @@ public class PostgresSolicitudAssignmentRepository : ISolicitudAssignmentReposit
             await connection.OpenAsync();
 
             const string insertSql = @"
-                INSERT INTO solicitud_rechazo (tenant_id, solicitud_id, aliado_id, motivo, creado_en)
-                VALUES (@TenantId, @RequestId, @AliadoId, @Motivo, now())
+                INSERT INTO solicitud_rechazo (tenant_id, solicitud_id, aliado_id, motivo)
+                VALUES (@TenantId, @RequestId, @AliadoId, @Motivo)
                 ON CONFLICT (solicitud_id, aliado_id) DO NOTHING;";
 
             await connection.ExecuteAsync(insertSql, new
