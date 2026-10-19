@@ -37,7 +37,7 @@ public class GetEligibleAlliesUseCaseTests
                 Id = Guid.NewGuid(),
                 NombreRazonSocial = "Laura Mendoza S.A.S.",
                 Tipo = "empresa",
-                EstadoVerificacion = "aprobado"
+                EstadoVerificacion = "VERIFICADO"
             },
             new()
             {

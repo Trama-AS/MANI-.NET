@@ -76,6 +76,35 @@ public class CoreAllyClient : IAllyRepository
         return await ReadAsync<SolicitudContext>(response);
     }
 
+    public async Task<AllyProfile?> GetAllyProfileAsync(Guid usuarioId, Guid tenantId)
+    {
+        var url = $"{RequireBaseUrl()}/api/v1/allies/me";
+
+        using var response = await SendAsync(url, tenantId, null);
+        if (response.StatusCode == HttpStatusCode.NotFound || response.StatusCode == HttpStatusCode.Forbidden)
+        {
+            // Core no encontró un aliado para el token reenviado, o el rol no es de aliado: no hay perfil de aliado.
+            return null;
+        }
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogError("Core respondió {StatusCode} al consultar el perfil del aliado.", (int)response.StatusCode);
+            throw new CoreServiceUnavailableException($"Core respondió {(int)response.StatusCode} al consultar el perfil del aliado.");
+        }
+
+        var profile = await ReadAsync<AllyProfile>(response);
+
+        // Core resuelve al aliado por el JWT reenviado: si no coincide con la cuenta y el tenant autenticados en Dispatch,
+        // no se acepta (evita actuar con el perfil de otra cuenta).
+        if (profile == null || profile.UsuarioId != usuarioId || profile.TenantId != tenantId)
+        {
+            _logger.LogWarning("El perfil de aliado devuelto por Core no corresponde a la cuenta autenticada.");
+            return null;
+        }
+
+        return profile;
+    }
+
     private string RequireBaseUrl()
     {
         if (string.IsNullOrWhiteSpace(_coreServiceUrl))

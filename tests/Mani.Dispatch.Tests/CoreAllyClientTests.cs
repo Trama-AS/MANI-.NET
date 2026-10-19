@@ -6,6 +6,7 @@ using System.Net.Http;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using ManiDispatch.Application.Interfaces;
 using ManiDispatch.Domain.Entities;
 using ManiDispatch.Domain.Exceptions;
 using ManiDispatch.Infrastructure.Core;
@@ -180,5 +181,63 @@ public class CoreAllyClientTests
         var client = CreateClient(new StubHandler(_ => Json(HttpStatusCode.OK, "{}")), coreUrl: null);
 
         await Assert.ThrowsAsync<CoreServiceUnavailableException>(() => client.GetSolicitudContextAsync(Guid.NewGuid(), Guid.NewGuid()));
+    }
+
+    private static HttpResponseMessage AllyProfileJson(Guid id, Guid tenantId, Guid usuarioId, string estado) =>
+        Json(HttpStatusCode.OK, $"{{\"id\":\"{id}\",\"tenantId\":\"{tenantId}\",\"usuarioId\":\"{usuarioId}\",\"estadoVerificacion\":\"{estado}\"}}");
+
+    [Fact]
+    public async Task GetAllyProfileAsync_MapsTheProfile_AndCallsAlliesMe()
+    {
+        var allyId = Guid.NewGuid();
+        var tenantId = Guid.NewGuid();
+        var usuarioId = Guid.NewGuid();
+        var handler = new StubHandler(_ => AllyProfileJson(allyId, tenantId, usuarioId, "VERIFICADO"));
+
+        var profile = await CreateClient(handler).GetAllyProfileAsync(usuarioId, tenantId);
+
+        Assert.NotNull(profile);
+        Assert.Equal(allyId, profile!.Id);
+        Assert.Equal("VERIFICADO", profile.EstadoVerificacion);
+        Assert.Equal("http://core.test/api/v1/allies/me", handler.LastRequest!.RequestUri!.ToString());
+        Assert.Equal(tenantId.ToString(), handler.LastRequest.Headers.GetValues("X-Tenant-Id").Single());
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    public async Task GetAllyProfileAsync_WhenCoreHasNoAlly_ReturnsNull(HttpStatusCode status)
+    {
+        var client = CreateClient(new StubHandler(_ => Json(status, "{}")));
+
+        Assert.Null(await client.GetAllyProfileAsync(Guid.NewGuid(), Guid.NewGuid()));
+    }
+
+    [Fact]
+    public async Task GetAllyProfileAsync_WhenTheProfileBelongsToAnotherAccountOrTenant_ReturnsNull()
+    {
+        var usuarioId = Guid.NewGuid();
+        var tenantId = Guid.NewGuid();
+        var otherAccount = CreateClient(new StubHandler(_ => AllyProfileJson(Guid.NewGuid(), tenantId, Guid.NewGuid(), "VERIFICADO")));
+        var otherTenant = CreateClient(new StubHandler(_ => AllyProfileJson(Guid.NewGuid(), Guid.NewGuid(), usuarioId, "VERIFICADO")));
+
+        Assert.Null(await otherAccount.GetAllyProfileAsync(usuarioId, tenantId));
+        Assert.Null(await otherTenant.GetAllyProfileAsync(usuarioId, tenantId));
+    }
+
+    [Fact]
+    public async Task GetAllyProfileAsync_WhenCoreFails_ThrowsUnavailable()
+    {
+        var client = CreateClient(new StubHandler(_ => Json(HttpStatusCode.InternalServerError, "{}")));
+
+        await Assert.ThrowsAsync<CoreServiceUnavailableException>(() => client.GetAllyProfileAsync(Guid.NewGuid(), Guid.NewGuid()));
+    }
+
+    [Fact]
+    public async Task GetAllyProfileAsync_WithoutCoreUrl_ThrowsUnavailable()
+    {
+        var client = CreateClient(new StubHandler(_ => Json(HttpStatusCode.OK, "{}")), coreUrl: null);
+
+        await Assert.ThrowsAsync<CoreServiceUnavailableException>(() => client.GetAllyProfileAsync(Guid.NewGuid(), Guid.NewGuid()));
     }
 }

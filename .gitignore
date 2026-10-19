@@ -7,5 +7,6 @@ obj/
 .vscode/
 *.log
 .env
+.env.*
 TestResults/
 coverage/
