@@ -101,7 +101,7 @@ public class PostgresAllyRepository : IAllyRepository
                 INNER JOIN aliado_categoria ac ON a.id = ac.aliado_id AND a.tenant_id = ac.tenant_id
                 INNER JOIN cobertura_aliado ca ON a.id = ca.aliado_id AND a.tenant_id = ca.tenant_id
                 INNER JOIN ascendencia asc_z ON ca.zona_id = asc_z.id
-                INNER JOIN zona z ON z.id = ca.zona_id AND z.estado = 'activa'
+                INNER JOIN zona z ON z.id = ca.zona_id AND z.estado = 'ACTIVO'
                 WHERE a.tenant_id = @TenantId
                   AND ac.categoria_id = @CategoriaId
                   AND a.estado_verificacion = 'VERIFICADO'
@@ -110,8 +110,7 @@ public class PostgresAllyRepository : IAllyRepository
                       SELECT 1 FROM aliado_ausencia aa
                       WHERE aa.aliado_id = a.id
                         AND aa.tenant_id = a.tenant_id
-                        AND aa.inicio <= now()
-                        AND aa.fin > now()
+                        AND aa.inicio <= now() AND aa.fin > now()
                   )
                   AND (@RequestId IS NULL OR NOT EXISTS (
                       SELECT 1 FROM solicitud_rechazo r
@@ -135,7 +134,7 @@ public class PostgresAllyRepository : IAllyRepository
                 INNER JOIN aliado_categoria ac ON a.id = ac.aliado_id AND a.tenant_id = ac.tenant_id
                 INNER JOIN cobertura_aliado ca ON a.id = ca.aliado_id AND a.tenant_id = ca.tenant_id
                 INNER JOIN ascendencia asc_z ON ca.zona_id = asc_z.id
-                INNER JOIN zona z ON z.id = ca.zona_id AND z.estado = 'activa'
+                INNER JOIN zona z ON z.id = ca.zona_id AND z.estado = 'ACTIVO'
                 WHERE a.tenant_id = @TenantId
                   AND ac.categoria_id = @CategoriaId
                   AND a.estado_verificacion = 'VERIFICADO'
@@ -144,8 +143,7 @@ public class PostgresAllyRepository : IAllyRepository
                       SELECT 1 FROM aliado_ausencia aa
                       WHERE aa.aliado_id = a.id
                         AND aa.tenant_id = a.tenant_id
-                        AND aa.inicio <= now()
-                        AND aa.fin > now()
+                        AND aa.inicio <= now() AND aa.fin > now()
                   )
                   AND (@RequestId IS NULL OR NOT EXISTS (
                       SELECT 1 FROM solicitud_rechazo r
