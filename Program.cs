@@ -1,4 +1,10 @@
 using System.Text.Json;
+using ManiDispatch.Application.Interfaces;
+using ManiDispatch.Application.UseCases;
+using ManiDispatch.Infrastructure.Core;
+
+// Cargar variables de entorno si existe .env
+DotNetEnv.Env.Load();
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -16,6 +22,13 @@ builder.Services.AddCors(options =>
         policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
     });
 });
+
+// Inyección de dependencias para Arquitectura Limpia
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddTransient<ForwardAuthorizationHandler>();
+builder.Services.AddHttpClient<IAllyRepository, CoreAllyClient>(client => client.Timeout = TimeSpan.FromSeconds(3))
+    .AddHttpMessageHandler<ForwardAuthorizationHandler>();
+builder.Services.AddScoped<GetEligibleAlliesUseCase>();
 
 var app = builder.Build();
 
@@ -48,3 +61,7 @@ app.MapGet("/health", (HttpContext ctx) =>
 app.MapControllers();
 
 app.Run();
+
+[System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
+public partial class Program { }
+

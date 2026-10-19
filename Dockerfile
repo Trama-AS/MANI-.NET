@@ -4,7 +4,7 @@ WORKDIR /src
 COPY ManiDispatch.csproj .
 RUN dotnet restore
 COPY . .
-RUN dotnet publish -c Release -o /app/publish
+RUN dotnet publish ManiDispatch.csproj -c Release -o /app/publish
 
 # Runtime stage
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
