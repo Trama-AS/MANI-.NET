@@ -26,6 +26,7 @@ public class MatchResponseDto
     public string? RequestId { get; set; }
     public string ZonaId { get; set; } = string.Empty;
     public string CategoriaId { get; set; } = string.Empty;
+    public string? Tipo { get; set; }
     public int Page { get; set; }
     public int PageSize { get; set; }
     public int TotalCount { get; set; }

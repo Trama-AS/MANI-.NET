@@ -107,7 +107,8 @@ public class DispatchController : ControllerBase
         [FromQuery] string? zonaId,
         [FromQuery] string? categoriaId,
         [FromQuery] int? page,
-        [FromQuery] int? pageSize)
+        [FromQuery] int? pageSize,
+        [FromQuery] string? tipo = null)
     {
         var correlationId = GetOrCreateCorrelationId();
 
@@ -172,6 +173,7 @@ public class DispatchController : ControllerBase
             RequestId = requestId,
             ZonaId = resolvedZonaId,
             CategoriaId = resolvedCategoriaId,
+            Tipo = tipo,
             Page = page,
             PageSize = pageSize
         };
