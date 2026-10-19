@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using ManiDispatch.Application.DTOs;
 using ManiDispatch.Application.UseCases;
@@ -19,10 +20,14 @@ public class DispatchController : ControllerBase
     // Memoria atómica para demostrar exclusión concurrente (RNF-05)
     private static readonly ConcurrentDictionary<string, string> AcceptedRequests = new();
     private readonly GetEligibleAlliesUseCase _getEligibleAlliesUseCase;
+    private readonly OrchestrateDispatchUseCase _orchestrateDispatchUseCase;
 
-    public DispatchController(GetEligibleAlliesUseCase getEligibleAlliesUseCase)
+    public DispatchController(
+        GetEligibleAlliesUseCase getEligibleAlliesUseCase,
+        OrchestrateDispatchUseCase orchestrateDispatchUseCase)
     {
         _getEligibleAlliesUseCase = getEligibleAlliesUseCase ?? throw new ArgumentNullException(nameof(getEligibleAlliesUseCase));
+        _orchestrateDispatchUseCase = orchestrateDispatchUseCase ?? throw new ArgumentNullException(nameof(orchestrateDispatchUseCase));
     }
 
     [HttpGet("health")]
@@ -198,6 +203,99 @@ public class DispatchController : ControllerBase
     }
 
     /// <summary>
+    /// Orquestación de despacho de la solicitud (US-04.1.1-M6 / SCRUM-1073).
+    /// Transmite la oferta a los aliados elegibles (Broadcast conforme a ADR-0016).
+    /// </summary>
+    [HttpPost("requests/orchestrate")]
+    public async Task<IActionResult> OrchestrateDispatch([FromBody] OrchestrateRequestDto? dto)
+    {
+        var correlationId = GetOrCreateCorrelationId();
+
+        var authResult = JwtAuthHelper.Authenticate(Request.Headers.Authorization);
+        if (!authResult.IsAuthenticated)
+        {
+            return Unauthorized(new
+            {
+                error = authResult.ErrorMessage,
+                status = StatusCodes.Status401Unauthorized,
+                correlationId,
+                timestamp = DateTime.UtcNow.ToString("o")
+            });
+        }
+
+        var tenantId = authResult.TenantId!.Value;
+
+        // Restricción de rol (según AGENTS.md y revisión de QA): los aliados no pueden orquestar el despacho.
+        var role = authResult.Role?.ToLowerInvariant();
+        if (role == "aliado")
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                error = "Rol no autorizado: los aliados no pueden orquestar el despacho de solicitudes.",
+                status = StatusCodes.Status403Forbidden,
+                correlationId,
+                timestamp = DateTime.UtcNow.ToString("o")
+            });
+        }
+
+        if (dto != null && !string.IsNullOrWhiteSpace(dto.TenantId))
+        {
+            if (Guid.TryParse(dto.TenantId, out var requestedTenantGuid) && requestedTenantGuid != tenantId)
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new
+                {
+                    error = "Aislamiento cross-tenant violado: no tiene acceso al tenant especificado (ADR-0018).",
+                    status = StatusCodes.Status403Forbidden,
+                    correlationId,
+                    timestamp = DateTime.UtcNow.ToString("o")
+                });
+            }
+        }
+
+        var safeDto = dto ?? new OrchestrateRequestDto();
+
+        try
+        {
+            var result = await _orchestrateDispatchUseCase.ExecuteAsync(safeDto, correlationId, tenantId);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new
+            {
+                error = ex.Message,
+                status = StatusCodes.Status404NotFound,
+                correlationId,
+                timestamp = DateTime.UtcNow.ToString("o")
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new
+            {
+                error = ex.Message,
+                status = StatusCodes.Status409Conflict,
+                correlationId,
+                timestamp = DateTime.UtcNow.ToString("o")
+            });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new
+            {
+                error = ex.Message,
+                status = StatusCodes.Status400BadRequest,
+                correlationId,
+                timestamp = DateTime.UtcNow.ToString("o")
+            });
+        }
+        catch (CoreServiceUnavailableException)
+        {
+            return CoreUnavailable(correlationId);
+        }
+    }
+
+    /// <summary>
     /// Aceptación de servicio con exclusión concurrente atómica (RF-14 / RNF-05).
     /// </summary>
     [HttpPost("requests/{requestId}/accept")]
@@ -246,7 +344,7 @@ public class DispatchController : ControllerBase
     {
         return StatusCode(StatusCodes.Status503ServiceUnavailable, new
         {
-            error = "El servicio Core no está disponible; no se puede calcular la elegibilidad de aliados.",
+            error = "El servicio Core no está disponible; no se pudo completar la operación.",
             status = StatusCodes.Status503ServiceUnavailable,
             correlationId,
             timestamp = DateTime.UtcNow.ToString("o")

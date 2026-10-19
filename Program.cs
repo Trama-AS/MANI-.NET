@@ -2,6 +2,7 @@ using System.Text.Json;
 using ManiDispatch.Application.Interfaces;
 using ManiDispatch.Application.UseCases;
 using ManiDispatch.Infrastructure.Core;
+using ManiDispatch.Infrastructure.Dispatch;
 
 // Cargar variables de entorno si existe .env
 DotNetEnv.Env.Load();
@@ -28,7 +29,10 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddTransient<ForwardAuthorizationHandler>();
 builder.Services.AddHttpClient<IAllyRepository, CoreAllyClient>(client => client.Timeout = TimeSpan.FromSeconds(3))
     .AddHttpMessageHandler<ForwardAuthorizationHandler>();
+builder.Services.AddHttpClient<IDispatchPublisher, CoreDispatchPublisher>(client => client.Timeout = TimeSpan.FromSeconds(3))
+    .AddHttpMessageHandler<ForwardAuthorizationHandler>();
 builder.Services.AddScoped<GetEligibleAlliesUseCase>();
+builder.Services.AddScoped<OrchestrateDispatchUseCase>();
 
 var app = builder.Build();
 
