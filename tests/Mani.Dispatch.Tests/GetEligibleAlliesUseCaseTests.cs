@@ -112,6 +112,7 @@ public class GetEligibleAlliesUseCaseTests
     [Theory]
     [InlineData("PERSONA_JURIDICA", "PERSONA_JURIDICA")]
     [InlineData(" persona_natural ", "PERSONA_NATURAL")]
+    [InlineData("empleado_directo", "EMPLEADO_DIRECTO")]
     public async Task ExecuteAsync_PassesNormalizedTipoToRepository_WhenTipoIsValid(string tipo, string esperado)
     {
         _mockRepo.Setup(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()))

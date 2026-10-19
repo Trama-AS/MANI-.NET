@@ -7,7 +7,7 @@ public class MatchRequestDto
     public string? ZonaId { get; set; }
     public string? CategoriaId { get; set; }
 
-    // Filtro opcional por tipo de aliado (US-04.1.3): PERSONA_NATURAL o PERSONA_JURIDICA
+    // Filtro opcional por tipo de aliado (US-04.1.3): PERSONA_NATURAL, PERSONA_JURIDICA o EMPLEADO_DIRECTO
     public string? Tipo { get; set; }
     public int? Page { get; set; } = 1;
     public int? PageSize { get; set; } = 20;

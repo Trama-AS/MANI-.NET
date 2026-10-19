@@ -148,4 +148,4 @@ Dispatch no lee las tablas de Core (SAD §7.4, ADR-0030): pide la elegibilidad d
 |---|---|
 | `CORE_SERVICE_URL` | URL base de Core. Obligatoria; sin ella (o si Core no responde, con tiempo de espera de 3 s) los endpoints de elegibilidad devuelven `503`. |
 
-Endpoints que Dispatch consume en Core: `GET /api/v1/allies/me` (perfil del aliado autenticado), `GET /api/v1/allies/eligible` (admite `tipo=PERSONA_NATURAL|PERSONA_JURIDICA`) y `GET /api/v1/solicitudes/{id}/context`. Dispatch reenvía el `Authorization` (JWT del usuario) y `X-Correlation-ID`; Core autentica con su middleware y toma tenant y rol del claim verificado (ADR-0030). `X-Tenant-Id` viaja solo como referencia.
+Endpoints que Dispatch consume en Core: `GET /api/v1/allies/me` (perfil del aliado autenticado), `GET /api/v1/allies/eligible` (admite `tipo=PERSONA_NATURAL|PERSONA_JURIDICA|EMPLEADO_DIRECTO`) y `GET /api/v1/solicitudes/{id}/context`. Dispatch reenvía el `Authorization` (JWT del usuario) y `X-Correlation-ID`; Core autentica con su middleware y toma tenant y rol del claim verificado (ADR-0030). `X-Tenant-Id` viaja solo como referencia.

@@ -9,8 +9,8 @@ namespace ManiDispatch.Application.UseCases;
 
 public class GetEligibleAlliesUseCase
 {
-    // Valores canónicos de aliado.tipo en el esquema vivo
-    public static readonly string[] TiposAliado = { "PERSONA_NATURAL", "PERSONA_JURIDICA" };
+    // Valores canónicos de aliado.tipo: los tres tipos del SRS (RF-05), decisión de la PO en SCRUM-862
+    public static readonly string[] TiposAliado = { "PERSONA_NATURAL", "PERSONA_JURIDICA", "EMPLEADO_DIRECTO" };
 
     private readonly IAllyRepository _allyRepository;
 
