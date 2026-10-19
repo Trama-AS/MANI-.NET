@@ -44,7 +44,7 @@ public class OrchestrateDispatchUseCaseTests
 
         var allies = new List<Ally>
         {
-            new() { Id = Guid.NewGuid(), NombreRazonSocial = "Aliado 1 S.A.S.", Tipo = "empresa", EstadoVerificacion = "aprobado" },
+            new() { Id = Guid.NewGuid(), NombreRazonSocial = "Aliado 1 S.A.S.", Tipo = "empresa", EstadoVerificacion = "VERIFICADO" },
             new() { Id = Guid.NewGuid(), NombreRazonSocial = "Aliado 2", Tipo = "independiente", EstadoVerificacion = "VERIFICADO" }
         };
 

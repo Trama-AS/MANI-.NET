@@ -35,8 +35,7 @@ public class AcceptDispatchOfferUseCase
             throw new UnauthorizedAccessException("MANI-SOL-403V: no existe un perfil de aliado asociado a la cuenta en este tenant.");
         }
 
-        bool isVerified = string.Equals(allyProfile.EstadoVerificacion, "VERIFICADO", StringComparison.OrdinalIgnoreCase) ||
-                          string.Equals(allyProfile.EstadoVerificacion, "aprobado", StringComparison.OrdinalIgnoreCase);
+        bool isVerified = string.Equals(allyProfile.EstadoVerificacion, "VERIFICADO", StringComparison.OrdinalIgnoreCase);
 
         if (!isVerified)
         {

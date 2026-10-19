@@ -106,7 +106,7 @@ public class DispatchControllerTests
                 Id = Guid.NewGuid(),
                 NombreRazonSocial = "Servicios Técnicos S.A.S.",
                 Tipo = "empresa",
-                EstadoVerificacion = "aprobado"
+                EstadoVerificacion = "VERIFICADO"
             }
         };
 
@@ -238,7 +238,7 @@ public class DispatchControllerTests
 
         var allies = new List<Ally>
         {
-            new() { Id = Guid.NewGuid(), NombreRazonSocial = "Aliado Experto", Tipo = "independiente", EstadoVerificacion = "aprobado" }
+            new() { Id = Guid.NewGuid(), NombreRazonSocial = "Aliado Experto", Tipo = "independiente", EstadoVerificacion = "VERIFICADO" }
         };
 
         _mockRepo.Setup(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()))
