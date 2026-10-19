@@ -24,7 +24,10 @@ builder.Services.AddCors(options =>
 });
 
 // Inyección de dependencias para Arquitectura Limpia
-builder.Services.AddHttpClient<IAllyRepository, CoreAllyClient>(client => client.Timeout = TimeSpan.FromSeconds(3));
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddTransient<ForwardAuthorizationHandler>();
+builder.Services.AddHttpClient<IAllyRepository, CoreAllyClient>(client => client.Timeout = TimeSpan.FromSeconds(3))
+    .AddHttpMessageHandler<ForwardAuthorizationHandler>();
 builder.Services.AddScoped<GetEligibleAlliesUseCase>();
 
 var app = builder.Build();
