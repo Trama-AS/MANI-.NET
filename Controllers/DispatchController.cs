@@ -4,6 +4,8 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using ManiDispatch.Application.DTOs;
 using ManiDispatch.Application.UseCases;
+using ManiDispatch.Domain.Entities;
+using ManiDispatch.Domain.Exceptions;
 using ManiDispatch.Infrastructure.Auth;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -94,6 +96,10 @@ public class DispatchController : ControllerBase
                 timestamp = DateTime.UtcNow.ToString("o")
             });
         }
+        catch (CoreServiceUnavailableException)
+        {
+            return CoreUnavailable(correlationId);
+        }
     }
 
     /// <summary>
@@ -141,7 +147,15 @@ public class DispatchController : ControllerBase
         // Si zona o categoría no vienen en query params, se consulta la solicitud real del tenant
         if (string.IsNullOrWhiteSpace(resolvedZonaId) || string.IsNullOrWhiteSpace(resolvedCategoriaId))
         {
-            var solicitud = await _getEligibleAlliesUseCase.GetSolicitudContextAsync(requestGuid, tenantId);
+            SolicitudContext? solicitud;
+            try
+            {
+                solicitud = await _getEligibleAlliesUseCase.GetSolicitudContextAsync(requestGuid, tenantId);
+            }
+            catch (CoreServiceUnavailableException)
+            {
+                return CoreUnavailable(correlationId);
+            }
             if (solicitud == null)
             {
                 return NotFound(new
@@ -181,6 +195,10 @@ public class DispatchController : ControllerBase
                 correlationId,
                 timestamp = DateTime.UtcNow.ToString("o")
             });
+        }
+        catch (CoreServiceUnavailableException)
+        {
+            return CoreUnavailable(correlationId);
         }
     }
 
@@ -271,6 +289,10 @@ public class DispatchController : ControllerBase
                 timestamp = DateTime.UtcNow.ToString("o")
             });
         }
+        catch (CoreServiceUnavailableException)
+        {
+            return CoreUnavailable(correlationId);
+        }
     }
 
     /// <summary>
@@ -313,6 +335,17 @@ public class DispatchController : ControllerBase
             requestId,
             assignedAllyId = dto.AllyId,
             status = "ASSIGNED",
+            correlationId,
+            timestamp = DateTime.UtcNow.ToString("o")
+        });
+    }
+
+    private ObjectResult CoreUnavailable(string correlationId)
+    {
+        return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+        {
+            error = "El servicio Core no está disponible; no se pudo completar la operación.",
+            status = StatusCodes.Status503ServiceUnavailable,
             correlationId,
             timestamp = DateTime.UtcNow.ToString("o")
         });
