@@ -109,6 +109,70 @@ public class GetEligibleAlliesUseCaseTests
             _useCase.ExecuteAsync(request, "corr-2", Guid.NewGuid()));
     }
 
+    [Theory]
+    [InlineData("PERSONA_JURIDICA", "PERSONA_JURIDICA")]
+    [InlineData(" persona_natural ", "PERSONA_NATURAL")]
+    [InlineData("empleado_directo", "EMPLEADO_DIRECTO")]
+    public async Task ExecuteAsync_PassesNormalizedTipoToRepository_WhenTipoIsValid(string tipo, string esperado)
+    {
+        _mockRepo.Setup(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()))
+                 .ReturnsAsync((new List<Ally>(), 0));
+
+        var request = new MatchRequestDto
+        {
+            ZonaId = Guid.NewGuid().ToString(),
+            CategoriaId = Guid.NewGuid().ToString(),
+            Tipo = tipo
+        };
+
+        var result = await _useCase.ExecuteAsync(request, "corr-tipo", Guid.NewGuid());
+
+        Assert.Equal(esperado, result.Tipo);
+        Assert.Empty(result.MatchedAllies);
+        Assert.Equal(0, result.TotalCount);
+        _mockRepo.Verify(r => r.GetEligibleAlliesAsync(It.Is<MatchCriteria>(c => c.Tipo == esperado)), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task ExecuteAsync_DoesNotFilterByTipo_WhenTipoIsMissing(string? tipo)
+    {
+        _mockRepo.Setup(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()))
+                 .ReturnsAsync((new List<Ally>(), 0));
+
+        var request = new MatchRequestDto
+        {
+            ZonaId = Guid.NewGuid().ToString(),
+            CategoriaId = Guid.NewGuid().ToString(),
+            Tipo = tipo
+        };
+
+        var result = await _useCase.ExecuteAsync(request, "corr-sin-tipo", Guid.NewGuid());
+
+        Assert.Null(result.Tipo);
+        _mockRepo.Verify(r => r.GetEligibleAlliesAsync(It.Is<MatchCriteria>(c => c.Tipo == null)), Times.Once);
+    }
+
+    [Theory]
+    [InlineData("EMPRESA")]
+    [InlineData("independiente")]
+    [InlineData("PERSONA_NATURAL' OR '1'='1")]
+    public async Task ExecuteAsync_ThrowsArgumentException_WhenTipoIsInvalid(string tipo)
+    {
+        var request = new MatchRequestDto
+        {
+            ZonaId = Guid.NewGuid().ToString(),
+            CategoriaId = Guid.NewGuid().ToString(),
+            Tipo = tipo
+        };
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            _useCase.ExecuteAsync(request, "corr-tipo-invalido", Guid.NewGuid()));
+        _mockRepo.Verify(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()), Times.Never);
+    }
+
     [Fact]
     public async Task GetSolicitudContextAsync_DelegatesToRepository()
     {

@@ -97,6 +97,28 @@ public class CoreAllyClientTests
     }
 
     [Fact]
+    public async Task GetEligibleAlliesAsync_WithTipo_SendsItToCore()
+    {
+        var handler = new StubHandler(_ => Json(HttpStatusCode.OK, "{\"allies\":[],\"totalCount\":0}"));
+        var criteria = Criteria();
+        criteria.Tipo = "PERSONA_JURIDICA";
+
+        await CreateClient(handler).GetEligibleAlliesAsync(criteria);
+
+        Assert.Contains("tipo=PERSONA_JURIDICA", handler.LastRequest!.RequestUri!.Query);
+    }
+
+    [Fact]
+    public async Task GetEligibleAlliesAsync_WithoutTipo_OmitsTheParameter()
+    {
+        var handler = new StubHandler(_ => Json(HttpStatusCode.OK, "{\"allies\":[],\"totalCount\":0}"));
+
+        await CreateClient(handler).GetEligibleAlliesAsync(Criteria());
+
+        Assert.DoesNotContain("tipo=", handler.LastRequest!.RequestUri!.Query);
+    }
+
+    [Fact]
     public async Task GetEligibleAlliesAsync_WithoutCoreUrl_ThrowsUnavailable()
     {
         var client = CreateClient(new StubHandler(_ => Json(HttpStatusCode.OK, "{}")), coreUrl: null);

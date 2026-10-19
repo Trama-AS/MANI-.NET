@@ -47,6 +47,11 @@ public class CoreAllyClient : IAllyRepository
             url += $"&requestId={criteria.RequestId.Value}";
         }
 
+        if (!string.IsNullOrWhiteSpace(criteria.Tipo))
+        {
+            url += $"&tipo={Uri.EscapeDataString(criteria.Tipo)}";
+        }
+
         using var response = await SendAsync(url, criteria.TenantId, criteria.CorrelationId);
         if (!response.IsSuccessStatusCode)
         {

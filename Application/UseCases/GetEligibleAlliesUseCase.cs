@@ -9,6 +9,9 @@ namespace ManiDispatch.Application.UseCases;
 
 public class GetEligibleAlliesUseCase
 {
+    // Valores canónicos de aliado.tipo: los tres tipos del SRS (RF-05), decisión de la PO en SCRUM-862
+    public static readonly string[] TiposAliado = { "PERSONA_NATURAL", "PERSONA_JURIDICA", "EMPLEADO_DIRECTO" };
+
     private readonly IAllyRepository _allyRepository;
 
     public GetEligibleAlliesUseCase(IAllyRepository allyRepository)
@@ -47,6 +50,16 @@ public class GetEligibleAlliesUseCase
             throw new ArgumentException($"El parámetro CategoriaId '{request.CategoriaId}' no es un UUID válido.", nameof(request.CategoriaId));
         }
 
+        string? tipo = null;
+        if (!string.IsNullOrWhiteSpace(request.Tipo))
+        {
+            tipo = request.Tipo.Trim().ToUpperInvariant();
+            if (Array.IndexOf(TiposAliado, tipo) < 0)
+            {
+                throw new ArgumentException($"El parámetro Tipo '{request.Tipo}' no es válido. Valores permitidos: {string.Join(", ", TiposAliado)}.", nameof(request.Tipo));
+            }
+        }
+
         int page = request.Page.HasValue && request.Page.Value > 0 ? request.Page.Value : 1;
         int pageSize = request.PageSize.HasValue && request.PageSize.Value > 0 ? request.PageSize.Value : 20;
 
@@ -62,6 +75,7 @@ public class GetEligibleAlliesUseCase
             RequestId = parsedRequestId,
             ZonaId = zonaGuid,
             CategoriaId = categoriaGuid,
+            Tipo = tipo,
             Page = page,
             PageSize = pageSize
         };
@@ -84,6 +98,7 @@ public class GetEligibleAlliesUseCase
             RequestId = requestId,
             ZonaId = request.ZonaId,
             CategoriaId = request.CategoriaId,
+            Tipo = tipo,
             Page = page,
             PageSize = pageSize,
             TotalCount = totalCount,

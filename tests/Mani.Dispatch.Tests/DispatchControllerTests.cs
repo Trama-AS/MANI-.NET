@@ -171,6 +171,45 @@ public class DispatchControllerTests
     }
 
     [Fact]
+    public async Task GetEligibleAlliesForRequest_FiltersByTipo_WhenTipoQueryParamIsSent()
+    {
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+        _mockRepo.Setup(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()))
+                 .ReturnsAsync((new List<Ally>(), 0));
+
+        var actionResult = await _controller.GetEligibleAlliesForRequest(
+            Guid.NewGuid().ToString(),
+            zonaId: Guid.NewGuid().ToString(),
+            categoriaId: Guid.NewGuid().ToString(),
+            page: 1,
+            pageSize: 10,
+            tipo: "persona_juridica");
+
+        var okResult = Assert.IsType<OkObjectResult>(actionResult);
+        var response = Assert.IsType<MatchResponseDto>(okResult.Value);
+        Assert.Equal("PERSONA_JURIDICA", response.Tipo);
+        _mockRepo.Verify(r => r.GetEligibleAlliesAsync(It.Is<MatchCriteria>(c =>
+            c.Tipo == "PERSONA_JURIDICA" && c.TenantId == _testTenantId)), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetEligibleAlliesForRequest_WithInvalidTipo_Returns400BadRequest()
+    {
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+
+        var actionResult = await _controller.GetEligibleAlliesForRequest(
+            Guid.NewGuid().ToString(),
+            zonaId: Guid.NewGuid().ToString(),
+            categoriaId: Guid.NewGuid().ToString(),
+            page: 1,
+            pageSize: 10,
+            tipo: "EMPRESA");
+
+        Assert.IsType<BadRequestObjectResult>(actionResult);
+        _mockRepo.Verify(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()), Times.Never);
+    }
+
+    [Fact]
     public async Task GetEligibleAlliesForRequest_WhenSolicitudNotFound_Returns404NotFound()
     {
         _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
