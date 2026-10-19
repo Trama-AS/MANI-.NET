@@ -6,6 +6,7 @@ using ManiDispatch.Application.DTOs;
 using ManiDispatch.Application.Interfaces;
 using ManiDispatch.Application.UseCases;
 using ManiDispatch.Domain.Entities;
+using ManiDispatch.Domain.Exceptions;
 using ManiDispatch.Infrastructure.Auth;
 using ManiDispatch.Infrastructure.Repositories;
 using ManiDispatch.Tests.Helpers;
@@ -623,5 +624,65 @@ public class DispatchControllerTests
         // Assert
         var notFound = Assert.IsType<NotFoundObjectResult>(result);
         Assert.Equal(404, notFound.StatusCode);
+    }
+
+    [Fact]
+    public async Task MatchProfessionals_WhenCoreIsUnavailable_Returns503()
+    {
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+        _mockRepo.Setup(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()))
+                 .ThrowsAsync(new CoreServiceUnavailableException("Core no respondió."));
+
+        var result = await _controller.MatchProfessionals(new MatchRequestDto
+        {
+            ZonaId = Guid.NewGuid().ToString(),
+            CategoriaId = Guid.NewGuid().ToString()
+        });
+
+        var response = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(503, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetEligibleAlliesForRequest_WhenCoreIsUnavailableResolvingSolicitud_Returns503()
+    {
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+        var requestId = Guid.NewGuid();
+        _mockRepo.Setup(r => r.GetSolicitudContextAsync(requestId, _testTenantId))
+                 .ThrowsAsync(new CoreServiceUnavailableException("Core no respondió."));
+
+        var result = await _controller.GetEligibleAlliesForRequest(requestId.ToString(), null, null, 1, 10);
+
+        var response = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(503, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetEligibleAlliesForRequest_WhenCoreIsUnavailableListingAllies_Returns503()
+    {
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+        _mockRepo.Setup(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()))
+                 .ThrowsAsync(new CoreServiceUnavailableException("Core no respondió."));
+
+        var result = await _controller.GetEligibleAlliesForRequest(
+            Guid.NewGuid().ToString(), Guid.NewGuid().ToString(), Guid.NewGuid().ToString(), 1, 10);
+
+        var response = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(503, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task OrchestrateDispatch_WhenCoreIsUnavailable_Returns503()
+    {
+        var adminToken = TestTokenHelper.CreateTestToken(_testTenantId, "admin-1", "admin_tenant");
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {adminToken}";
+        var requestId = Guid.NewGuid();
+        _mockRepo.Setup(r => r.GetSolicitudContextAsync(requestId, _testTenantId))
+                 .ThrowsAsync(new CoreServiceUnavailableException("Core no respondió."));
+
+        var result = await _controller.OrchestrateDispatch(new OrchestrateRequestDto { RequestId = requestId.ToString() });
+
+        var response = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(503, response.StatusCode);
     }
 }

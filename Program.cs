@@ -1,6 +1,7 @@
 using System.Text.Json;
 using ManiDispatch.Application.Interfaces;
 using ManiDispatch.Application.UseCases;
+using ManiDispatch.Infrastructure.Core;
 using ManiDispatch.Infrastructure.Dispatch;
 using ManiDispatch.Infrastructure.Repositories;
 
@@ -25,8 +26,8 @@ builder.Services.AddCors(options =>
 });
 
 // Inyección de dependencias para Arquitectura Limpia
-builder.Services.AddScoped<IAllyRepository, PostgresAllyRepository>();
-builder.Services.AddScoped<IDispatchPublisher, PostgresDispatchPublisher>();
+builder.Services.AddHttpClient<IAllyRepository, CoreAllyClient>(client => client.Timeout = TimeSpan.FromSeconds(3));
+builder.Services.AddHttpClient<IDispatchPublisher, CoreDispatchPublisher>(client => client.Timeout = TimeSpan.FromSeconds(3));
 builder.Services.AddScoped<ISolicitudAssignmentRepository, PostgresSolicitudAssignmentRepository>();
 builder.Services.AddScoped<GetEligibleAlliesUseCase>();
 builder.Services.AddScoped<OrchestrateDispatchUseCase>();

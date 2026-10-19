@@ -1,9 +1,9 @@
-using Dapper;
 using ManiDispatch.Application.DTOs;
 using ManiDispatch.Application.UseCases;
+using ManiDispatch.Domain.Exceptions;
+using ManiDispatch.Infrastructure.Core;
 using ManiDispatch.Infrastructure.Dispatch;
-using ManiDispatch.Infrastructure.Repositories;
-using ManiDispatch.Tests.Fixtures;
+using ManiDispatch.Tests.Helpers;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -11,108 +11,86 @@ using Xunit;
 namespace ManiDispatch.Tests;
 
 /// <summary>
-/// OrchestrateDispatchUseCase con los repositorios reales sobre PostgreSQL real: las ofertas
-/// se guardan una sola vez por aliado aunque el despacho se oriente varias veces (RNF-03).
+/// OrchestrateDispatchUseCase con los clientes HTTP reales contra un Core simulado en localhost:
+/// las ofertas se guardan una sola vez por aliado aunque el despacho se oriente varias veces (RNF-03)
+/// y los errores de Core no se ocultan (ADR-0030).
 /// </summary>
-[Collection("Postgres")]
 public class OrchestrateDispatchIntegrationTests
 {
-    private readonly PostgresFixture _db;
-
-    public OrchestrateDispatchIntegrationTests(PostgresFixture db) => _db = db;
-
-    private OrchestrateDispatchUseCase CreateUseCase(string? connectionString = null)
+    private static OrchestrateDispatchUseCase CreateUseCase(string coreUrl)
     {
         var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?> { ["ConnectionStrings:DefaultConnection"] = connectionString ?? _db.ConnectionString })
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["CORE_SERVICE_URL"] = coreUrl })
             .Build();
         return new OrchestrateDispatchUseCase(
-            new PostgresAllyRepository(config, NullLogger<PostgresAllyRepository>.Instance),
-            new PostgresDispatchPublisher(config, NullLogger<PostgresDispatchPublisher>.Instance));
-    }
-
-    private static async Task<int> CountOffers(DispatchSeed seed, Guid solicitud)
-    {
-        await using var c = seed.Open();
-        await c.OpenAsync();
-        return await c.QuerySingleAsync<int>(
-            "SELECT count(*) FROM notificacion WHERE tenant_id = @TenantId AND tipo = 'OFERTA_DESPACHO' AND payload->>'requestId' = @id",
-            new { seed.TenantId, id = solicitud.ToString() });
+            new CoreAllyClient(new HttpClient { Timeout = TimeSpan.FromSeconds(3) }, config, NullLogger<CoreAllyClient>.Instance),
+            new CoreDispatchPublisher(new HttpClient { Timeout = TimeSpan.FromSeconds(3) }, config, NullLogger<CoreDispatchPublisher>.Instance));
     }
 
     [Fact]
     public async Task Orchestrate_TwiceForTheSameRequest_DoesNotDuplicateOffers()
     {
-        var seed = await DispatchSeed.CreateAsync(_db.ConnectionString);
-        await seed.AddAliadoAsync("Ana");
-        await seed.AddAliadoAsync("Beto");
-        await seed.AddAliadoAsync("Sin verificar", estadoVerificacion: "PENDIENTE");
-        var solicitud = await seed.AddSolicitudAsync();
-        var useCase = CreateUseCase();
+        using var core = new FakeCoreServer();
+        var tenant = Guid.NewGuid();
+        core.AddEligibleAlly(tenant, "Ana");
+        core.AddEligibleAlly(tenant, "Beto");
+        var solicitud = core.AddSolicitud(tenant);
+        var useCase = CreateUseCase(core.BaseUrl);
         var request = new OrchestrateRequestDto(solicitud.ToString());
 
-        var first = await useCase.ExecuteAsync(request, "corr-1", seed.TenantId);
-        var second = await useCase.ExecuteAsync(request, "corr-2", seed.TenantId);
+        var first = await useCase.ExecuteAsync(request, "corr-1", tenant);
+        var second = await useCase.ExecuteAsync(request, "corr-2", tenant);
 
         Assert.Equal("DISPATCHED", first.Status);
         Assert.Equal(2, first.CandidatesCount);
         Assert.Equal("DISPATCHED", second.Status);
         Assert.Equal(2, second.CandidatesCount);
-        Assert.Equal(2, await CountOffers(seed, solicitud));
+        Assert.Equal(2, core.CountOffers(tenant, solicitud));
     }
 
     [Fact]
     public async Task Orchestrate_WithoutEligibleAllies_ReportsNoCandidates_AndStoresNothing()
     {
-        var seed = await DispatchSeed.CreateAsync(_db.ConnectionString);
-        var solicitud = await seed.AddSolicitudAsync();
+        using var core = new FakeCoreServer();
+        var tenant = Guid.NewGuid();
+        var solicitud = core.AddSolicitud(tenant);
 
-        var result = await CreateUseCase().ExecuteAsync(new OrchestrateRequestDto(solicitud.ToString()), "corr", seed.TenantId);
+        var result = await CreateUseCase(core.BaseUrl).ExecuteAsync(new OrchestrateRequestDto(solicitud.ToString()), "corr", tenant);
 
         Assert.Equal("NO_ELIGIBLE_ALLIES", result.Status);
-        Assert.Equal(0, await CountOffers(seed, solicitud));
+        Assert.Equal(0, core.CountOffers(tenant, solicitud));
     }
 
     [Fact]
     public async Task Orchestrate_RequestOfAnotherTenant_ThrowsNotFound()
     {
-        var seed = await DispatchSeed.CreateAsync(_db.ConnectionString);
-        var solicitud = await seed.AddSolicitudAsync();
+        using var core = new FakeCoreServer();
+        var solicitud = core.AddSolicitud(Guid.NewGuid());
 
         await Assert.ThrowsAsync<KeyNotFoundException>(() =>
-            CreateUseCase().ExecuteAsync(new OrchestrateRequestDto(solicitud.ToString()), "corr", Guid.NewGuid()));
+            CreateUseCase(core.BaseUrl).ExecuteAsync(new OrchestrateRequestDto(solicitud.ToString()), "corr", Guid.NewGuid()));
     }
 
     [Fact]
     public async Task Orchestrate_AlreadyAssignedRequest_ThrowsInvalidOperation()
     {
-        var seed = await DispatchSeed.CreateAsync(_db.ConnectionString);
-        var solicitud = await seed.AddSolicitudAsync(estado: "ASIGNADA");
+        using var core = new FakeCoreServer();
+        var tenant = Guid.NewGuid();
+        var solicitud = core.AddSolicitud(tenant, estado: "ASIGNADA");
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            CreateUseCase().ExecuteAsync(new OrchestrateRequestDto(solicitud.ToString()), "corr", seed.TenantId));
+            CreateUseCase(core.BaseUrl).ExecuteAsync(new OrchestrateRequestDto(solicitud.ToString()), "corr", tenant));
     }
 
     [Fact]
-    public async Task Orchestrate_WhenSavingOffersFails_TheErrorPropagatesAndIsNotHidden()
+    public async Task Orchestrate_WhenCoreRejectsTheOffers_TheErrorPropagatesAndIsNotHidden()
     {
-        var seed = await DispatchSeed.CreateAsync(_db.ConnectionString);
-        await seed.AddAliadoAsync("Ana");
-        var solicitud = await seed.AddSolicitudAsync();
+        using var core = new FakeCoreServer { FailNotifications = true };
+        var tenant = Guid.NewGuid();
+        core.AddEligibleAlly(tenant, "Ana");
+        var solicitud = core.AddSolicitud(tenant);
 
-        // Lee con la base real, pero el publicador apunta a una base inalcanzable.
-        var reader = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?> { ["ConnectionStrings:DefaultConnection"] = _db.ConnectionString }).Build();
-        var broken = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["ConnectionStrings:DefaultConnection"] = "Host=127.0.0.1;Port=1;Database=x;Username=x;Password=x;Timeout=2"
-            }).Build();
-        var useCase = new OrchestrateDispatchUseCase(
-            new PostgresAllyRepository(reader, NullLogger<PostgresAllyRepository>.Instance),
-            new PostgresDispatchPublisher(broken, NullLogger<PostgresDispatchPublisher>.Instance));
-
-        await Assert.ThrowsAnyAsync<Exception>(() =>
-            useCase.ExecuteAsync(new OrchestrateRequestDto(solicitud.ToString()), "corr", seed.TenantId));
+        await Assert.ThrowsAsync<CoreServiceUnavailableException>(() =>
+            CreateUseCase(core.BaseUrl).ExecuteAsync(new OrchestrateRequestDto(solicitud.ToString()), "corr", tenant));
     }
 }
