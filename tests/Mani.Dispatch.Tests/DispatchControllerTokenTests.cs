@@ -33,8 +33,8 @@ public class DispatchControllerTokenTests
         _controller = new DispatchController(
             new GetEligibleAlliesUseCase(_repo.Object),
             new OrchestrateDispatchUseCase(_repo.Object, _publisher.Object),
-            new AcceptDispatchOfferUseCase(_assignments),
-            new RejectDispatchOfferUseCase(_assignments))
+            new AcceptDispatchOfferUseCase(_assignments, _repo.Object),
+            new RejectDispatchOfferUseCase(_assignments, _repo.Object))
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
         };

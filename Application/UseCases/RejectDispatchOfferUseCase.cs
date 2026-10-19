@@ -7,10 +7,12 @@ namespace ManiDispatch.Application.UseCases;
 public class RejectDispatchOfferUseCase
 {
     private readonly ISolicitudAssignmentRepository _assignmentRepository;
+    private readonly IAllyRepository _allyRepository;
 
-    public RejectDispatchOfferUseCase(ISolicitudAssignmentRepository assignmentRepository)
+    public RejectDispatchOfferUseCase(ISolicitudAssignmentRepository assignmentRepository, IAllyRepository allyRepository)
     {
         _assignmentRepository = assignmentRepository ?? throw new ArgumentNullException(nameof(assignmentRepository));
+        _allyRepository = allyRepository ?? throw new ArgumentNullException(nameof(allyRepository));
     }
 
     public async Task<bool> ExecuteAsync(
@@ -29,7 +31,7 @@ public class RejectDispatchOfferUseCase
             throw new ArgumentException($"El RequestId '{requestId}' no es un UUID válido.", nameof(requestId));
         }
 
-        var allyProfile = await _assignmentRepository.GetAllyByUserIdAsync(usuarioId, tenantId);
+        var allyProfile = await _allyRepository.GetAllyProfileAsync(usuarioId, tenantId);
         if (allyProfile == null)
         {
             throw new UnauthorizedAccessException("MANI-SOL-403V: no existe un perfil de aliado asociado a la cuenta en este tenant.");

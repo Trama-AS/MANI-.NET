@@ -9,23 +9,6 @@ public class InMemorySolicitudAssignmentRepository : ISolicitudAssignmentReposit
 {
     private readonly ConcurrentDictionary<Guid, Guid> _assignments = new();
     private readonly ConcurrentDictionary<(Guid SolicitudId, Guid AliadoId), string> _rejections = new();
-    private readonly ConcurrentDictionary<Guid, AllyProfile> _allies = new();
-
-    public void RegisterAlly(AllyProfile profile)
-    {
-        _allies[profile.UsuarioId] = profile;
-    }
-
-    public Task<AllyProfile?> GetAllyByUserIdAsync(Guid usuarioId, Guid tenantId)
-    {
-        if (_allies.TryGetValue(usuarioId, out var profile) && profile.TenantId == tenantId)
-        {
-            return Task.FromResult<AllyProfile?>(profile);
-        }
-
-        return Task.FromResult<AllyProfile?>(null);
-    }
-
     public Task<AssignmentResult> AcceptRequestAsync(Guid requestId, Guid tenantId, Guid aliadoId)
     {
         if (_assignments.TryGetValue(requestId, out var currentWinner))

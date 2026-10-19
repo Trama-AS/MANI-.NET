@@ -22,7 +22,6 @@ public record AssignmentResult(
 
 public interface ISolicitudAssignmentRepository
 {
-    Task<AllyProfile?> GetAllyByUserIdAsync(Guid usuarioId, Guid tenantId);
     Task<AssignmentResult> AcceptRequestAsync(Guid requestId, Guid tenantId, Guid aliadoId);
     Task<bool> RejectRequestAsync(Guid requestId, Guid tenantId, Guid aliadoId, string motivo);
 }

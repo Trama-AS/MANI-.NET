@@ -7,10 +7,12 @@ namespace ManiDispatch.Application.UseCases;
 public class AcceptDispatchOfferUseCase
 {
     private readonly ISolicitudAssignmentRepository _assignmentRepository;
+    private readonly IAllyRepository _allyRepository;
 
-    public AcceptDispatchOfferUseCase(ISolicitudAssignmentRepository assignmentRepository)
+    public AcceptDispatchOfferUseCase(ISolicitudAssignmentRepository assignmentRepository, IAllyRepository allyRepository)
     {
         _assignmentRepository = assignmentRepository ?? throw new ArgumentNullException(nameof(assignmentRepository));
+        _allyRepository = allyRepository ?? throw new ArgumentNullException(nameof(allyRepository));
     }
 
     public async Task<AssignmentResult> ExecuteAsync(
@@ -29,7 +31,7 @@ public class AcceptDispatchOfferUseCase
         }
 
         // 1. Obtener perfil del aliado y validar estado VERIFICADO (DoD §9.3 / RPC 005)
-        var allyProfile = await _assignmentRepository.GetAllyByUserIdAsync(usuarioId, tenantId);
+        var allyProfile = await _allyRepository.GetAllyProfileAsync(usuarioId, tenantId);
         if (allyProfile == null)
         {
             throw new UnauthorizedAccessException("MANI-SOL-403V: no existe un perfil de aliado asociado a la cuenta en este tenant.");

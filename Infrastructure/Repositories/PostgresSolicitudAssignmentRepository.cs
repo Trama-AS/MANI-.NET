@@ -33,38 +33,6 @@ public class PostgresSolicitudAssignmentRepository : ISolicitudAssignmentReposit
         }
     }
 
-    public async Task<AllyProfile?> GetAllyByUserIdAsync(Guid usuarioId, Guid tenantId)
-    {
-        EnsureConnectionStringConfigured();
-
-        try
-        {
-            await using var connection = new NpgsqlConnection(_connectionString);
-            await connection.OpenAsync();
-
-            const string sql = @"
-                SELECT 
-                    id AS Id,
-                    tenant_id AS TenantId,
-                    usuario_id AS UsuarioId,
-                    estado_verificacion AS EstadoVerificacion
-                FROM aliado
-                WHERE usuario_id = @UsuarioId AND tenant_id = @TenantId
-                LIMIT 1;";
-
-            return await connection.QueryFirstOrDefaultAsync<AllyProfile>(sql, new
-            {
-                UsuarioId = usuarioId,
-                TenantId = tenantId
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error al consultar aliado por usuarioId {UsuarioId} en PostgreSQL para TenantId {TenantId}.", usuarioId, tenantId);
-            throw;
-        }
-    }
-
     public async Task<AssignmentResult> AcceptRequestAsync(Guid requestId, Guid tenantId, Guid aliadoId)
     {
         EnsureConnectionStringConfigured();

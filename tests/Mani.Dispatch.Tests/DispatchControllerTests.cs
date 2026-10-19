@@ -25,6 +25,7 @@ public class DispatchControllerTests
     private readonly InMemorySolicitudAssignmentRepository _assignmentRepo;
     private readonly GetEligibleAlliesUseCase _getEligibleUseCase;
     private readonly OrchestrateDispatchUseCase _orchestrateUseCase;
+    private readonly FakeAllyProfiles _allyProfiles = new();
     private readonly AcceptDispatchOfferUseCase _acceptUseCase;
     private readonly RejectDispatchOfferUseCase _rejectUseCase;
     private readonly DispatchController _controller;
@@ -45,8 +46,8 @@ public class DispatchControllerTests
 
         _getEligibleUseCase = new GetEligibleAlliesUseCase(_mockRepo.Object);
         _orchestrateUseCase = new OrchestrateDispatchUseCase(_mockRepo.Object, _mockPublisher.Object);
-        _acceptUseCase = new AcceptDispatchOfferUseCase(_assignmentRepo);
-        _rejectUseCase = new RejectDispatchOfferUseCase(_assignmentRepo);
+        _acceptUseCase = new AcceptDispatchOfferUseCase(_assignmentRepo, _allyProfiles);
+        _rejectUseCase = new RejectDispatchOfferUseCase(_assignmentRepo, _allyProfiles);
 
         _controller = new DispatchController(_getEligibleUseCase, _orchestrateUseCase, _acceptUseCase, _rejectUseCase)
         {
@@ -280,8 +281,8 @@ public class DispatchControllerTests
         var ally1UserId = Guid.NewGuid();
         var ally2UserId = Guid.NewGuid();
 
-        _assignmentRepo.RegisterAlly(new AllyProfile(Guid.NewGuid(), _testTenantId, ally1UserId, "VERIFICADO"));
-        _assignmentRepo.RegisterAlly(new AllyProfile(Guid.NewGuid(), _testTenantId, ally2UserId, "VERIFICADO"));
+        _allyProfiles.RegisterAlly(new AllyProfile(Guid.NewGuid(), _testTenantId, ally1UserId, "VERIFICADO"));
+        _allyProfiles.RegisterAlly(new AllyProfile(Guid.NewGuid(), _testTenantId, ally2UserId, "VERIFICADO"));
 
         var ally1Token = TestTokenHelper.CreateTestToken(_testTenantId, ally1UserId.ToString(), "aliado");
         var ally2Token = TestTokenHelper.CreateTestToken(_testTenantId, ally2UserId.ToString(), "aliado");
@@ -330,11 +331,15 @@ public class DispatchControllerTests
         var postgresRepo = new PostgresSolicitudAssignmentRepository(
             mockConfig.Object,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<PostgresSolicitudAssignmentRepository>.Instance);
+        // El aliado existe en Core (verificado): el fallo que se prueba es el de la base de Dispatch al asignar.
+        var allyUserId = Guid.NewGuid();
+        var profiles = new FakeAllyProfiles();
+        profiles.RegisterAlly(new AllyProfile(Guid.NewGuid(), _testTenantId, allyUserId, "VERIFICADO"));
         var controller = new DispatchController(
             _getEligibleUseCase,
             _orchestrateUseCase,
-            new AcceptDispatchOfferUseCase(postgresRepo),
-            new RejectDispatchOfferUseCase(postgresRepo))
+            new AcceptDispatchOfferUseCase(postgresRepo, profiles),
+            new RejectDispatchOfferUseCase(postgresRepo, profiles))
         {
             ControllerContext = new ControllerContext
             {
@@ -342,7 +347,6 @@ public class DispatchControllerTests
             }
         };
 
-        var allyUserId = Guid.NewGuid();
         var token = TestTokenHelper.CreateTestToken(_testTenantId, allyUserId.ToString(), "aliado");
         controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
 
@@ -357,7 +361,7 @@ public class DispatchControllerTests
     {
         string reqId = Guid.NewGuid().ToString();
         var allyUserId = Guid.NewGuid();
-        _assignmentRepo.RegisterAlly(new AllyProfile(Guid.NewGuid(), _testTenantId, allyUserId, "VERIFICADO"));
+        _allyProfiles.RegisterAlly(new AllyProfile(Guid.NewGuid(), _testTenantId, allyUserId, "VERIFICADO"));
         var allyToken = TestTokenHelper.CreateTestToken(_testTenantId, allyUserId.ToString(), "aliado");
 
         _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {allyToken}";
@@ -374,11 +378,15 @@ public class DispatchControllerTests
         var postgresRepo = new PostgresSolicitudAssignmentRepository(
             mockConfig.Object,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<PostgresSolicitudAssignmentRepository>.Instance);
+        // El aliado existe en Core (verificado): el fallo que se prueba es el de la base de Dispatch al asignar.
+        var allyUserId = Guid.NewGuid();
+        var profiles = new FakeAllyProfiles();
+        profiles.RegisterAlly(new AllyProfile(Guid.NewGuid(), _testTenantId, allyUserId, "VERIFICADO"));
         var controller = new DispatchController(
             _getEligibleUseCase,
             _orchestrateUseCase,
-            new AcceptDispatchOfferUseCase(postgresRepo),
-            new RejectDispatchOfferUseCase(postgresRepo))
+            new AcceptDispatchOfferUseCase(postgresRepo, profiles),
+            new RejectDispatchOfferUseCase(postgresRepo, profiles))
         {
             ControllerContext = new ControllerContext
             {
@@ -386,7 +394,6 @@ public class DispatchControllerTests
             }
         };
 
-        var allyUserId = Guid.NewGuid();
         var token = TestTokenHelper.CreateTestToken(_testTenantId, allyUserId.ToString(), "aliado");
         controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
 

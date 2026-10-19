@@ -138,22 +138,6 @@ public class PostgresSolicitudAssignmentRepositoryIntegrationTests
     }
 
     [Fact]
-    public async Task GetAllyByUserId_ReturnsTheProfile_AndNullForAnotherTenant()
-    {
-        var seed = await DispatchSeed.CreateAsync(_db.ConnectionString);
-        var (aliado, usuario) = await seed.AddAliadoAsync("Ana");
-        var repo = CreateRepository();
-
-        var profile = await repo.GetAllyByUserIdAsync(usuario, seed.TenantId);
-        var crossTenant = await repo.GetAllyByUserIdAsync(usuario, Guid.NewGuid());
-
-        Assert.NotNull(profile);
-        Assert.Equal(aliado, profile!.Id);
-        Assert.Equal("VERIFICADO", profile.EstadoVerificacion);
-        Assert.Null(crossTenant);
-    }
-
-    [Fact]
     public async Task WithoutConnectionString_Throws_SoNothingIsConfirmedWithoutDatabase()
     {
         var repo = new PostgresSolicitudAssignmentRepository(
@@ -161,6 +145,5 @@ public class PostgresSolicitudAssignmentRepositoryIntegrationTests
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => repo.AcceptRequestAsync(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()));
         await Assert.ThrowsAsync<InvalidOperationException>(() => repo.RejectRequestAsync(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "OTRO"));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => repo.GetAllyByUserIdAsync(Guid.NewGuid(), Guid.NewGuid()));
     }
 }

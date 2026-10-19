@@ -21,7 +21,8 @@ public class ConcurrentAcceptanceTests
     {
         // Arrange (RNF-05 / ADR-0016 / SCRUM-1074)
         var repo = new InMemorySolicitudAssignmentRepository();
-        var useCase = new AcceptDispatchOfferUseCase(repo);
+        var profiles = new FakeAllyProfiles();
+        var useCase = new AcceptDispatchOfferUseCase(repo, profiles);
 
         var tenantId = Guid.NewGuid();
         var requestId = Guid.NewGuid().ToString();
@@ -32,7 +33,7 @@ public class ConcurrentAcceptanceTests
             var userId = Guid.NewGuid();
             var allyId = Guid.NewGuid();
             var profile = new AllyProfile(allyId, tenantId, userId, "VERIFICADO");
-            repo.RegisterAlly(profile);
+            profiles.RegisterAlly(profile);
             return (UserId: userId, AllyId: allyId);
         }).ToList();
 
@@ -76,7 +77,8 @@ public class ConcurrentAcceptanceTests
     {
         // Arrange
         var repo = new InMemorySolicitudAssignmentRepository();
-        var useCase = new AcceptDispatchOfferUseCase(repo);
+        var profiles = new FakeAllyProfiles();
+        var useCase = new AcceptDispatchOfferUseCase(repo, profiles);
 
         var tenantId = Guid.NewGuid();
         var requestId = Guid.NewGuid().ToString();
@@ -84,7 +86,7 @@ public class ConcurrentAcceptanceTests
 
         // Aliado con estado pendiente (no verificado)
         var profile = new AllyProfile(Guid.NewGuid(), tenantId, unverifiedUserId, "PENDIENTE");
-        repo.RegisterAlly(profile);
+        profiles.RegisterAlly(profile);
 
         // Act & Assert (DoD §9.3)
         var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
@@ -98,7 +100,8 @@ public class ConcurrentAcceptanceTests
     {
         // Arrange: Usuario autenticado que NO está registrado como aliado en el tenant
         var repo = new InMemorySolicitudAssignmentRepository();
-        var useCase = new AcceptDispatchOfferUseCase(repo);
+        var profiles = new FakeAllyProfiles();
+        var useCase = new AcceptDispatchOfferUseCase(repo, profiles);
 
         var tenantId = Guid.NewGuid();
         var requestId = Guid.NewGuid().ToString();
@@ -117,9 +120,6 @@ public class ConcurrentAcceptanceTests
         // Arrange: sin cadena de conexión configurada (ADR-0016: sin BD la aceptación no puede confirmarse)
         var mockConfig = new Mock<IConfiguration>();
         var repo = new PostgresSolicitudAssignmentRepository(mockConfig.Object, NullLogger<PostgresSolicitudAssignmentRepository>.Instance);
-
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            repo.GetAllyByUserIdAsync(Guid.NewGuid(), Guid.NewGuid()));
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             repo.AcceptRequestAsync(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()));
