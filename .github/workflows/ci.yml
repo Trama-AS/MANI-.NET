@@ -1,0 +1,47 @@
+name: CI
+
+# Ejecuta las pruebas unitarias y genera el reporte de cobertura (QA-06 / SCRUM-1123).
+# El análisis de SonarQube y su Quality Gate corren en quality-gate.yml (SonarQube
+# self-hosted de la VM de Calidad).
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build & Test (.NET 8)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore ManiDispatch.sln
+
+      - name: Build solution
+        run: dotnet build ManiDispatch.sln --no-restore --configuration Release
+
+      - name: Run unit & integration tests
+        run: >
+          dotnet test ManiDispatch.sln --no-build --configuration Release
+          --collect:"XPlat Code Coverage" --results-directory ./TestResults
+          -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
+
+      - name: Publicar reporte de cobertura
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-opencover
+          path: TestResults/**/coverage.opencover.xml
+          if-no-files-found: warn
