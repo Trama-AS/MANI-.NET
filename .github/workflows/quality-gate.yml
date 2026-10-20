@@ -1,0 +1,166 @@
+name: Quality Gate
+
+# Análisis de SonarQube Community con Quality Gate bloqueante (ADR-0005,
+# Políticas §14.1), con el mismo diseño que MANI-Node, MANI-Java y MANI-Landing.
+#
+# El servidor SonarQube vive en la VM de Calidad (red privada 10.43.x.x), que los
+# runners de GitHub no alcanzan. Por eso el trabajo se divide en dos jobs:
+#   1. pruebas_cobertura: corre en ubuntu-latest. Ejecuta las pruebas y genera el
+#      reporte de cobertura OpenCover (coverlet).
+#   2. sonar_quality_gate: corre en el runner self-hosted de la VM de Calidad
+#      (label "calidad"). El analizador de C# trabaja durante la compilación, así
+#      que este job compila la solución entre "begin" y "end" del scanner; no
+#      ejecuta las pruebas ni la aplicación.
+#
+# SonarQube Community no analiza ramas ni PRs, así que se usan dos proyectos:
+#   - mani-dotnet: push a develop (estado oficial de la rama).
+#   - mani-dotnet-pr: pull requests, para no pisar el estado de develop.
+#
+# Para que el gate BLOQUEE el merge, el ruleset de develop, release y main debe
+# exigir los dos checks: "Pruebas y cobertura" y "Sonar Quality Gate". Si las
+# pruebas fallan, el job de Sonar queda omitido y GitHub cuenta un job omitido
+# como aprobado.
+#
+# Requisitos: secreto SONAR_TOKEN y variable SONAR_HOST_URL (URL del servidor en
+# la VM de Calidad), definidos en el repositorio o en la organización.
+
+on:
+  pull_request:
+    branches: [develop, release, main]
+  push:
+    branches: [develop]
+
+permissions:
+  contents: read
+
+# En PR se cancela la corrida anterior; en push a develop cada commit conserva
+# su análisis.
+concurrency:
+  group: quality-gate-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  pruebas_cobertura:
+    name: Pruebas y cobertura
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restaurar dependencias
+        run: dotnet restore ManiDispatch.sln
+
+      - name: Pruebas con cobertura (OpenCover)
+        run: >
+          dotnet test ManiDispatch.sln --no-restore --configuration Release
+          --collect:"XPlat Code Coverage" --results-directory ./TestResults
+          -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
+
+      - name: Publicar reporte de cobertura
+        uses: actions/upload-artifact@v4
+        with:
+          name: cobertura_opencover
+          path: TestResults/**/coverage.opencover.xml
+          if-no-files-found: error
+          retention-days: 3
+
+  sonar_quality_gate:
+    name: Sonar Quality Gate
+    needs: pruebas_cobertura
+    # Los PRs desde forks no llegan al runner de la VM: su código no es de
+    # confianza y no tienen acceso a los secretos. En vez de omitir el job (un
+    # job omitido cuenta como aprobado), el job corre en ubuntu-latest y falla.
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || fromJSON('["self-hosted","calidad"]') }}
+    env:
+      # Modo de globalización invariante, para no depender de libicu en la VM.
+      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+      SONAR_PROJECT_KEY: ${{ github.event_name == 'pull_request' && 'mani-dotnet-pr' || 'mani-dotnet' }}
+    steps:
+      - name: Bloquear PRs desde forks
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+        run: |
+          echo "::error::Los PRs desde forks no pasan el Quality Gate. Abra el PR desde una rama de Trama-AS."
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Si falta el secreto o la variable, el job falla. Un check omitido o en
+      # verde sin análisis daría una falsa señal de calidad.
+      - name: Verificar configuración de SonarQube
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+        run: |
+          if [ -z "$SONAR_TOKEN" ]; then
+            echo "::error::SONAR_TOKEN no está configurado en los secretos del repositorio."
+            exit 1
+          fi
+          if [ -z "$SONAR_HOST_URL" ]; then
+            echo "::error::SONAR_HOST_URL no está configurada en las variables del repositorio."
+            exit 1
+          fi
+
+      # El SDK se instala en la caché de herramientas del runner, sin sudo.
+      - name: Configurar .NET 8
+        uses: actions/setup-dotnet@v4
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.tool_cache }}/dotnet
+        with:
+          dotnet-version: '8.0.x'
+
+      # El scanner de .NET necesita Java 17 o superior para el análisis final.
+      - name: Configurar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Instalar SonarScanner for .NET
+        run: dotnet tool install dotnet-sonarscanner --version 11.3.0 --tool-path .sonar/scanner
+
+      - name: Descargar reporte de cobertura
+        uses: actions/download-artifact@v4
+        with:
+          name: cobertura_opencover
+          path: coverage
+
+      # coverlet escribe rutas absolutas del runner de GitHub; sin este ajuste
+      # SonarQube no encuentra los archivos y la cobertura queda en 0.
+      - name: Ajustar rutas de cobertura a este runner
+        run: |
+          find coverage -name coverage.opencover.xml -exec \
+            sed -i "s#/home/runner/work/MANI-.NET/MANI-.NET#${GITHUB_WORKSPACE}#g" {} +
+          grep -l "${GITHUB_WORKSPACE}" -r coverage
+
+      - name: Iniciar análisis de SonarQube
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+        run: >
+          .sonar/scanner/dotnet-sonarscanner begin
+          /k:"$SONAR_PROJECT_KEY"
+          /n:"MANI-.NET"
+          /d:sonar.host.url="$SONAR_HOST_URL"
+          /d:sonar.token="$SONAR_TOKEN"
+          /d:sonar.cs.opencover.reportsPaths="coverage/**/coverage.opencover.xml"
+          /d:sonar.exclusions="**/bin/**,**/obj/**,graphify-out/**"
+          /d:sonar.qualitygate.wait=true
+          /d:sonar.qualitygate.timeout=300
+
+      - name: Compilar la solución
+        run: dotnet build ManiDispatch.sln --configuration Release
+
+      - name: Finalizar análisis y esperar el Quality Gate
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: .sonar/scanner/dotnet-sonarscanner end /d:sonar.token="$SONAR_TOKEN"
