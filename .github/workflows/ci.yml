@@ -1,8 +1,8 @@
 name: CI
 
 # Ejecuta las pruebas unitarias y genera el reporte de cobertura (QA-06 / SCRUM-1123).
-# El análisis de SonarQube y su Quality Gate se conectan a este reporte; el proyecto en
-# SonarCloud y su token los crea DevOps (no se incluyen aquí).
+# El análisis de SonarQube y su Quality Gate corren en quality-gate.yml (SonarQube
+# self-hosted de la VM de Calidad).
 
 on:
   push:
