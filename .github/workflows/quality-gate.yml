@@ -161,6 +161,28 @@ jobs:
         run: dotnet build ManiDispatch.sln --configuration Release
 
       - name: Finalizar análisis y esperar el Quality Gate
+        id: sonar_end
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: .sonar/scanner/dotnet-sonarscanner end /d:sonar.token="$SONAR_TOKEN"
+
+      # El panel de SonarQube solo se ve desde la red de la universidad. Si el
+      # gate falla, este paso deja en el log qué condición falló y los issues y
+      # hotspots del código nuevo, para corregirlos sin acceso al panel. El token
+      # va como usuario de curl y GitHub lo enmascara; no se imprime.
+      - name: Detalle del Quality Gate fallido
+        if: failure() && steps.sonar_end.outcome == 'failure'
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+        run: |
+          consultar() {
+            echo "::group::$1"
+            respuesta=$(curl -sS --max-time 30 -u "${SONAR_TOKEN}:" "${SONAR_HOST_URL%/}$2" || true)
+            printf '%s' "$respuesta" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$respuesta"
+            echo "::endgroup::"
+          }
+          consultar "Condiciones del Quality Gate" "/api/qualitygates/project_status?projectKey=${SONAR_PROJECT_KEY}"
+          consultar "Métricas del código nuevo" "/api/measures/component?component=${SONAR_PROJECT_KEY}&metricKeys=new_coverage,new_lines_to_cover,new_uncovered_lines,new_duplicated_lines_density,new_violations,new_security_hotspots,new_security_hotspots_reviewed,new_reliability_rating,new_security_rating,new_maintainability_rating"
+          consultar "Issues del código nuevo" "/api/issues/search?componentKeys=${SONAR_PROJECT_KEY}&inNewCodePeriod=true&resolved=false&ps=100&additionalFields=_all"
+          consultar "Security hotspots del código nuevo" "/api/hotspots/search?project=${SONAR_PROJECT_KEY}&inNewCodePeriod=true&ps=100"

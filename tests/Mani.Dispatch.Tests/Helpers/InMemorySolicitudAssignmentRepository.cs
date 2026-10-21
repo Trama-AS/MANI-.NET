@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using ManiDispatch.Application.Interfaces;
 
@@ -59,5 +61,11 @@ public class InMemorySolicitudAssignmentRepository : ISolicitudAssignmentReposit
     {
         _rejections[(requestId, aliadoId)] = motivo;
         return Task.FromResult(true);
+    }
+
+    public Task<IReadOnlyList<Guid>> GetAssignedRequestIdsAsync(Guid tenantId, Guid aliadoId)
+    {
+        IReadOnlyList<Guid> ids = _assignments.Where(a => a.Value == aliadoId).Select(a => a.Key).ToList();
+        return Task.FromResult(ids);
     }
 }
