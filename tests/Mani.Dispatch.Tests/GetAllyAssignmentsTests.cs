@@ -92,7 +92,7 @@ public class GetAllyAssignmentsTests
         await _assignments.AcceptRequestAsync(mia, _tenantId, _aliadoId);
         var token = TestTokenHelper.CreateTestToken(_tenantId, _usuarioId.ToString(), "aliado");
 
-        var result = await Controller(token: token).GetMyAssignments();
+        var result = await Controller(token: token).GetMyAssignments(null);
 
         Assert.Equal(new[] { mia.ToString() }, RequestIds(result));
     }
@@ -102,7 +102,7 @@ public class GetAllyAssignmentsTests
     {
         var token = TestTokenHelper.CreateTestToken(_tenantId, _usuarioId.ToString(), "aliado");
 
-        var result = await Controller(token: token).GetMyAssignments();
+        var result = await Controller(token: token).GetMyAssignments(null);
 
         Assert.Empty(RequestIds(result));
     }
@@ -110,7 +110,7 @@ public class GetAllyAssignmentsTests
     [Fact]
     public async Task Get_WithoutToken_Returns401()
     {
-        var result = await Controller().GetMyAssignments();
+        var result = await Controller().GetMyAssignments(null);
 
         Assert.Equal(401, Assert.IsType<UnauthorizedObjectResult>(result).StatusCode);
     }
@@ -120,7 +120,7 @@ public class GetAllyAssignmentsTests
     {
         var token = TestTokenHelper.CreateTestToken(_tenantId, _usuarioId.ToString(), "cliente");
 
-        var result = await Controller(token: token).GetMyAssignments();
+        var result = await Controller(token: token).GetMyAssignments(null);
 
         Assert.Equal(403, Assert.IsType<ObjectResult>(result).StatusCode);
     }
@@ -130,7 +130,7 @@ public class GetAllyAssignmentsTests
     {
         var token = TestTokenHelper.CreateTestToken(_tenantId, Guid.NewGuid().ToString(), "aliado");
 
-        var result = await Controller(token: token).GetMyAssignments();
+        var result = await Controller(token: token).GetMyAssignments(null);
 
         Assert.Equal(403, Assert.IsType<ObjectResult>(result).StatusCode);
     }
@@ -143,7 +143,7 @@ public class GetAllyAssignmentsTests
             .ThrowsAsync(new CoreServiceUnavailableException("Core no responde"));
         var token = TestTokenHelper.CreateTestToken(_tenantId, _usuarioId.ToString(), "aliado");
 
-        var result = await Controller(core.Object, token).GetMyAssignments();
+        var result = await Controller(core.Object, token).GetMyAssignments(null);
 
         Assert.Equal(503, Assert.IsType<ObjectResult>(result).StatusCode);
     }
@@ -163,9 +163,9 @@ public class GetAllyAssignmentsTests
     {
         var token = TestTokenHelper.CreateTestToken(_tenantId, _usuarioId.ToString(), "aliado");
 
-        var result = await Controller(token: token).GetMyAssignments();
+        var result = await Controller(token: token).GetMyAssignments(null);
 
-        Assert.StartsWith("disp-", Body(result).GetProperty("correlationId").GetString());
+        Assert.StartsWith("disp-", Body(result).GetProperty("correlationId").GetString(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -173,7 +173,7 @@ public class GetAllyAssignmentsTests
     {
         var token = TestTokenHelper.CreateTestToken(_tenantId, "no-es-uuid", "aliado");
 
-        var result = await Controller(token: token).GetMyAssignments();
+        var result = await Controller(token: token).GetMyAssignments(null);
 
         Assert.Equal(401, Assert.IsType<UnauthorizedObjectResult>(result).StatusCode);
     }
@@ -186,7 +186,7 @@ public class GetAllyAssignmentsTests
             .ThrowsAsync(new InvalidOperationException("conexión rechazada"));
         var token = TestTokenHelper.CreateTestToken(_tenantId, _usuarioId.ToString(), "aliado");
 
-        var result = await Controller(token: token, assignments: db.Object).GetMyAssignments();
+        var result = await Controller(token: token, assignments: db.Object).GetMyAssignments(null);
 
         Assert.Equal(503, Assert.IsType<ObjectResult>(result).StatusCode);
         Assert.Equal("DATABASE_UNAVAILABLE", Body(result).GetProperty("code").GetString());

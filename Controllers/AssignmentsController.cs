@@ -26,11 +26,11 @@ public class AssignmentsController : ControllerBase
     }
 
     [HttpGet("assignments/me")]
-    public async Task<IActionResult> GetMyAssignments([FromHeader(Name = "X-Correlation-ID")] string? correlationId = null)
+    public async Task<IActionResult> GetMyAssignments([FromHeader(Name = "X-Correlation-ID")] string? correlationId)
     {
         if (string.IsNullOrWhiteSpace(correlationId))
         {
-            correlationId = $"disp-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+            correlationId = $"disp-{Guid.NewGuid():N}";
         }
 
         var authResult = JwtAuthHelper.Authenticate(Request.Headers.Authorization);
@@ -83,7 +83,7 @@ public class AssignmentsController : ControllerBase
                 correlationId
             });
         }
-        catch (Exception)
+        catch (InvalidOperationException)
         {
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new
             {
