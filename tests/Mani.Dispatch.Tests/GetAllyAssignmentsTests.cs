@@ -37,19 +37,30 @@ public class GetAllyAssignmentsTests
         _allyProfiles.RegisterAlly(new AllyProfile(_aliadoId, _tenantId, _usuarioId, "VERIFICADO"));
     }
 
-    private AssignmentsController Controller(IAllyRepository? allies = null, string? token = null)
+    private AssignmentsController Controller(
+        IAllyRepository? allies = null,
+        string? token = null,
+        ISolicitudAssignmentRepository? assignments = null,
+        string? correlationId = "corr-asignaciones")
     {
-        var controller = new AssignmentsController(new GetAllyAssignmentsUseCase(_assignments, allies ?? _allyProfiles))
+        var useCase = new GetAllyAssignmentsUseCase(assignments ?? _assignments, allies ?? _allyProfiles);
+        var controller = new AssignmentsController(useCase)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
         };
-        controller.HttpContext.Request.Headers["X-Correlation-ID"] = "corr-asignaciones";
+        if (correlationId != null)
+        {
+            controller.HttpContext.Request.Headers["X-Correlation-ID"] = correlationId;
+        }
         if (token != null)
         {
             controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
         }
         return controller;
     }
+
+    private static JsonElement Body(IActionResult result) =>
+        JsonSerializer.SerializeToElement(Assert.IsAssignableFrom<ObjectResult>(result).Value);
 
     private static List<string> RequestIds(IActionResult result)
     {
@@ -141,6 +152,40 @@ public class GetAllyAssignmentsTests
 
         Assert.Equal(503, Assert.IsType<ObjectResult>(result).StatusCode);
     }
+
+    [Fact]
+    public async Task Get_WithoutCorrelationId_GeneratesOne()
+    {
+        var token = TestTokenHelper.CreateTestToken(_tenantId, _usuarioId.ToString(), "aliado");
+
+        var result = await Controller(token: token, correlationId: null).GetMyAssignments();
+
+        Assert.StartsWith("disp-", Body(result).GetProperty("correlationId").GetString());
+    }
+
+    [Fact]
+    public async Task Get_WithNonUuidUserInToken_Returns401()
+    {
+        var token = TestTokenHelper.CreateTestToken(_tenantId, "no-es-uuid", "aliado");
+
+        var result = await Controller(token: token).GetMyAssignments();
+
+        Assert.Equal(401, Assert.IsType<UnauthorizedObjectResult>(result).StatusCode);
+    }
+
+    [Fact]
+    public async Task Get_WhenTheDatabaseFails_Returns503()
+    {
+        var db = new Mock<ISolicitudAssignmentRepository>();
+        db.Setup(r => r.GetAssignedRequestIdsAsync(It.IsAny<Guid>(), It.IsAny<Guid>()))
+            .ThrowsAsync(new InvalidOperationException("conexión rechazada"));
+        var token = TestTokenHelper.CreateTestToken(_tenantId, _usuarioId.ToString(), "aliado");
+
+        var result = await Controller(token: token, assignments: db.Object).GetMyAssignments();
+
+        Assert.Equal(503, Assert.IsType<ObjectResult>(result).StatusCode);
+        Assert.Equal("DATABASE_UNAVAILABLE", Body(result).GetProperty("code").GetString());
+    }
 }
 
 /// <summary>La consulta de asignaciones contra PostgreSQL real con el esquema oficial.</summary>
@@ -184,5 +229,21 @@ public class PostgresAllyAssignmentsIntegrationTests
 
         Assert.Equal(new[] { asignada }, ids);
         Assert.Empty(otroTenant);
+    }
+
+    [Fact]
+    public async Task WhenPostgresIsUnreachable_PropagatesTheError()
+    {
+        // Puerto 1 en loopback: la conexión se rechaza de inmediato, sin depender del contenedor.
+        var repo = new PostgresSolicitudAssignmentRepository(
+            new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["ConnectionStrings:DefaultConnection"] = "Host=127.0.0.1;Port=1;Database=mani;Username=mani;Timeout=2"
+                })
+                .Build(),
+            NullLogger<PostgresSolicitudAssignmentRepository>.Instance);
+
+        await Assert.ThrowsAnyAsync<Exception>(() => repo.GetAssignedRequestIdsAsync(Guid.NewGuid(), Guid.NewGuid()));
     }
 }
