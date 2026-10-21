@@ -26,9 +26,8 @@ public class AssignmentsController : ControllerBase
     }
 
     [HttpGet("assignments/me")]
-    public async Task<IActionResult> GetMyAssignments()
+    public async Task<IActionResult> GetMyAssignments([FromHeader(Name = "X-Correlation-ID")] string? correlationId = null)
     {
-        var correlationId = Request.Headers["X-Correlation-ID"].ToString();
         if (string.IsNullOrWhiteSpace(correlationId))
         {
             correlationId = $"disp-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";

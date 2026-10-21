@@ -180,8 +180,8 @@ public class PostgresSolicitudAssignmentRepository : ISolicitudAssignmentReposit
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Fallo en base de datos al consultar las asignaciones del aliado {AliadoId}.", aliadoId);
-            throw;
+            // El controlador responde 503; aquí solo se agrega el contexto de la consulta.
+            throw new InvalidOperationException($"Fallo en base de datos al consultar las asignaciones del aliado {aliadoId}.", ex);
         }
     }
 }

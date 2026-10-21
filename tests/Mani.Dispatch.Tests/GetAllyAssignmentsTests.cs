@@ -40,18 +40,13 @@ public class GetAllyAssignmentsTests
     private AssignmentsController Controller(
         IAllyRepository? allies = null,
         string? token = null,
-        ISolicitudAssignmentRepository? assignments = null,
-        string? correlationId = "corr-asignaciones")
+        ISolicitudAssignmentRepository? assignments = null)
     {
         var useCase = new GetAllyAssignmentsUseCase(assignments ?? _assignments, allies ?? _allyProfiles);
         var controller = new AssignmentsController(useCase)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
         };
-        if (correlationId != null)
-        {
-            controller.HttpContext.Request.Headers["X-Correlation-ID"] = correlationId;
-        }
         if (token != null)
         {
             controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
@@ -154,11 +149,21 @@ public class GetAllyAssignmentsTests
     }
 
     [Fact]
+    public async Task Get_EchoesTheCorrelationId()
+    {
+        var token = TestTokenHelper.CreateTestToken(_tenantId, _usuarioId.ToString(), "aliado");
+
+        var result = await Controller(token: token).GetMyAssignments("corr-asignaciones");
+
+        Assert.Equal("corr-asignaciones", Body(result).GetProperty("correlationId").GetString());
+    }
+
+    [Fact]
     public async Task Get_WithoutCorrelationId_GeneratesOne()
     {
         var token = TestTokenHelper.CreateTestToken(_tenantId, _usuarioId.ToString(), "aliado");
 
-        var result = await Controller(token: token, correlationId: null).GetMyAssignments();
+        var result = await Controller(token: token).GetMyAssignments();
 
         Assert.StartsWith("disp-", Body(result).GetProperty("correlationId").GetString());
     }
@@ -244,6 +249,7 @@ public class PostgresAllyAssignmentsIntegrationTests
                 .Build(),
             NullLogger<PostgresSolicitudAssignmentRepository>.Instance);
 
-        await Assert.ThrowsAnyAsync<Exception>(() => repo.GetAssignedRequestIdsAsync(Guid.NewGuid(), Guid.NewGuid()));
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => repo.GetAssignedRequestIdsAsync(Guid.NewGuid(), Guid.NewGuid()));
+        Assert.NotNull(error.InnerException);
     }
 }
