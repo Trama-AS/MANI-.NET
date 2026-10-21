@@ -49,7 +49,7 @@ public class GetAllyAssignmentsTests
         };
         if (token != null)
         {
-            controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
+            controller.HttpContext.Request.Headers.Authorization = $"Bearer {token}";
         }
         return controller;
     }
