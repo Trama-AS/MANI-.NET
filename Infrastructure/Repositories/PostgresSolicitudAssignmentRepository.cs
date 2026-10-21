@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Dapper;
 using ManiDispatch.Application.Interfaces;
@@ -151,6 +153,34 @@ public class PostgresSolicitudAssignmentRepository : ISolicitudAssignmentReposit
         {
             _logger.LogError(ex, "Fallo al persistir rechazo en PostgreSQL para solicitud {RequestId}.", requestId);
             throw;
+        }
+    }
+
+    public async Task<IReadOnlyList<Guid>> GetAssignedRequestIdsAsync(Guid tenantId, Guid aliadoId)
+    {
+        EnsureConnectionStringConfigured();
+
+        try
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync();
+
+            // Asignada = el aliado ganó la exclusión concurrente (aliado_id). Cualquier estado posterior a la
+            // asignación cuenta, salvo la cancelación. Core usa los ids como conjunto, así que no se ordenan.
+            const string sql = @"
+                SELECT id
+                FROM solicitud
+                WHERE tenant_id = @TenantId
+                  AND aliado_id = @AliadoId
+                  AND estado <> 'CANCELADA';";
+
+            var ids = await connection.QueryAsync<Guid>(sql, new { TenantId = tenantId, AliadoId = aliadoId });
+            return ids.ToList();
+        }
+        catch (Exception ex)
+        {
+            // El controlador responde 503; aquí solo se agrega el contexto de la consulta.
+            throw new InvalidOperationException($"Fallo en base de datos al consultar las asignaciones del aliado {aliadoId}.", ex);
         }
     }
 }
