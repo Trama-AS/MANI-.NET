@@ -11,9 +11,19 @@ public record AuthResult(bool IsAuthenticated, Guid? TenantId, string? UserId, s
 
 public static class JwtAuthHelper
 {
+    // Audiencia que Supabase Auth pone en los tokens de acceso de usuarios con sesión.
+    private const string SupabaseAudience = "authenticated";
+
     private static readonly JwtSecurityTokenHandler TokenHandler = new();
 
-    public static AuthResult Authenticate(string? authHeader, string? explicitJwtSecret = null)
+    /// <summary>
+    /// Verifica el JWT con la misma política que validate-token de Core (ADR-0031 §1, SCRUM-1362):
+    /// ES256 con la clave pública del JWKS de SUPABASE_URL (elegida por kid, con aud e iss del
+    /// proyecto) o HS256 con SUPABASE_JWT_SECRET. Cada algoritmo usa solo su clave, así que un
+    /// token no puede elegir con qué se verifica; cualquier otro algoritmo se rechaza.
+    /// </summary>
+    /// <param name="jwks">Fuente de claves para pruebas; por omisión, la de SUPABASE_URL.</param>
+    public static AuthResult Authenticate(string? authHeader, string? explicitJwtSecret = null, JwksKeySource? jwks = null)
     {
         if (string.IsNullOrWhiteSpace(authHeader))
         {
@@ -33,22 +43,60 @@ public static class JwtAuthHelper
 
         try
         {
-            var jwtSecret = explicitJwtSecret ?? Environment.GetEnvironmentVariable("SUPABASE_JWT_SECRET");
+            var header = TokenHandler.ReadJwtToken(token).Header;
+            TokenValidationParameters validationParameters;
 
-            if (string.IsNullOrWhiteSpace(jwtSecret))
+            if (header.Alg == SecurityAlgorithms.EcdsaSha256)
             {
-                return new AuthResult(false, null, null, null, "Configuración de autenticación incompleta: SUPABASE_JWT_SECRET no configurado.");
+                var keySource = jwks ?? JwksKeySource.ForSupabaseUrl(Environment.GetEnvironmentVariable("SUPABASE_URL"));
+                if (keySource is null)
+                {
+                    return new AuthResult(false, null, null, null, "Configuración de autenticación incompleta: SUPABASE_URL no configurado para verificar ES256.");
+                }
+
+                var keys = keySource.GetKeys(header.Kid);
+                if (keys.Count == 0)
+                {
+                    return new AuthResult(false, null, null, null, "Firma del token JWT inválida: no se encontró la clave pública del token.");
+                }
+
+                validationParameters = new TokenValidationParameters
+                {
+                    ValidAlgorithms = new[] { SecurityAlgorithms.EcdsaSha256 },
+                    ValidateIssuerSigningKey = true,
+                    IssuerSigningKeys = keys,
+                    ValidateIssuer = true,
+                    ValidIssuer = keySource.Issuer,
+                    ValidateAudience = true,
+                    ValidAudience = SupabaseAudience,
+                    ValidateLifetime = true,
+                    ClockSkew = TimeSpan.FromMinutes(5)
+                };
             }
-
-            var validationParameters = new TokenValidationParameters
+            else if (header.Alg == SecurityAlgorithms.HmacSha256)
             {
-                ValidateIssuerSigningKey = true,
-                IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
-                ValidateIssuer = false,
-                ValidateAudience = false,
-                ValidateLifetime = true,
-                ClockSkew = TimeSpan.FromMinutes(5)
-            };
+                var jwtSecret = explicitJwtSecret ?? Environment.GetEnvironmentVariable("SUPABASE_JWT_SECRET");
+
+                if (string.IsNullOrWhiteSpace(jwtSecret))
+                {
+                    return new AuthResult(false, null, null, null, "Configuración de autenticación incompleta: SUPABASE_JWT_SECRET no configurado.");
+                }
+
+                validationParameters = new TokenValidationParameters
+                {
+                    ValidAlgorithms = new[] { SecurityAlgorithms.HmacSha256 },
+                    ValidateIssuerSigningKey = true,
+                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
+                    ValidateIssuer = false,
+                    ValidateAudience = false,
+                    ValidateLifetime = true,
+                    ClockSkew = TimeSpan.FromMinutes(5)
+                };
+            }
+            else
+            {
+                return new AuthResult(false, null, null, null, "Error de autenticación: algoritmo de firma no permitido.");
+            }
 
             var principal = TokenHandler.ValidateToken(token, validationParameters, out var validatedToken);
             var jwtToken = (JwtSecurityToken)validatedToken;
