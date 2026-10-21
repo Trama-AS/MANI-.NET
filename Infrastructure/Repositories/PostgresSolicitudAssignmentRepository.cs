@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Dapper;
 using ManiDispatch.Application.Interfaces;
@@ -150,6 +152,35 @@ public class PostgresSolicitudAssignmentRepository : ISolicitudAssignmentReposit
         catch (Exception ex)
         {
             _logger.LogError(ex, "Fallo al persistir rechazo en PostgreSQL para solicitud {RequestId}.", requestId);
+            throw;
+        }
+    }
+
+    public async Task<IReadOnlyList<Guid>> GetAssignedRequestIdsAsync(Guid tenantId, Guid aliadoId)
+    {
+        EnsureConnectionStringConfigured();
+
+        try
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync();
+
+            // Asignada = el aliado ganó la exclusión concurrente (aliado_id). Cualquier estado posterior a la
+            // asignación cuenta, salvo la cancelación.
+            const string sql = @"
+                SELECT id
+                FROM solicitud
+                WHERE tenant_id = @TenantId
+                  AND aliado_id = @AliadoId
+                  AND estado <> 'CANCELADA'
+                ORDER BY updated_at DESC;";
+
+            var ids = await connection.QueryAsync<Guid>(sql, new { TenantId = tenantId, AliadoId = aliadoId });
+            return ids.ToList();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Fallo en base de datos al consultar las asignaciones del aliado {AliadoId}.", aliadoId);
             throw;
         }
     }

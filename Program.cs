@@ -37,6 +37,7 @@ builder.Services.AddScoped<GetEligibleAlliesUseCase>();
 builder.Services.AddScoped<OrchestrateDispatchUseCase>();
 builder.Services.AddScoped<AcceptDispatchOfferUseCase>();
 builder.Services.AddScoped<RejectDispatchOfferUseCase>();
+builder.Services.AddScoped<GetAllyAssignmentsUseCase>();
 
 var app = builder.Build();
 
