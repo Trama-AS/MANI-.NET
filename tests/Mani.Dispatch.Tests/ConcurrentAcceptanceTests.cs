@@ -2,9 +2,14 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Threading;
 using System.Threading.Tasks;
 using ManiDispatch.Application.Interfaces;
 using ManiDispatch.Application.UseCases;
+using ManiDispatch.Domain.Exceptions;
+using ManiDispatch.Infrastructure.Core;
 using ManiDispatch.Infrastructure.Repositories;
 using ManiDispatch.Tests.Helpers;
 using Microsoft.Extensions.Configuration;
@@ -14,117 +19,173 @@ using Xunit;
 
 namespace ManiDispatch.Tests;
 
+/// <summary>
+/// Exclusión concurrente de la aceptación (RNF-05 / ADR-0016 / SCRUM-1403). Con la decisión 6A la decide Core; aquí
+/// se comprueba que Dispatch traduce bien el resultado y que, contra un Core por HTTP, solo uno gana.
+/// </summary>
 public class ConcurrentAcceptanceTests
 {
-    [Fact]
-    public async Task AcceptRequest_With50SimultaneousAllies_OnlyOneWins_AndOthersReceive409Conflict()
+    private static (List<(Guid UserId, Guid AllyId)> Allies, FakeAllyProfiles Profiles) CreateAllies(Guid tenantId, int count)
     {
-        // Arrange (RNF-05 / ADR-0016 / SCRUM-1074)
-        var repo = new InMemorySolicitudAssignmentRepository();
         var profiles = new FakeAllyProfiles();
-        var useCase = new AcceptDispatchOfferUseCase(repo, profiles);
-
-        var tenantId = Guid.NewGuid();
-        var requestId = Guid.NewGuid().ToString();
-
-        // Creamos 50 aliados verificados únicos
-        var allies = Enumerable.Range(1, 50).Select(i =>
+        var allies = Enumerable.Range(1, count).Select(_ =>
         {
             var userId = Guid.NewGuid();
             var allyId = Guid.NewGuid();
-            var profile = new AllyProfile(allyId, tenantId, userId, "VERIFICADO");
-            profiles.RegisterAlly(profile);
-            return (UserId: userId, AllyId: allyId);
+            profiles.RegisterAlly(new AllyProfile(allyId, tenantId, userId, "VERIFICADO"));
+            return (userId, allyId);
         }).ToList();
+        return (allies, profiles);
+    }
+
+    [Fact]
+    public async Task AcceptRequest_With50SimultaneousAllies_OnlyOneWins_AndOthersReceive409WithoutTheWinner()
+    {
+        var tenantId = Guid.NewGuid();
+        var requestId = Guid.NewGuid().ToString();
+        var (allies, profiles) = CreateAllies(tenantId, 50);
+        var current = new AsyncLocal<Guid>();
+        var core = new InMemoryCoreAssignments(profiles, () => current.Value);
+        var useCase = new AcceptDispatchOfferUseCase(new InMemorySolicitudAssignmentRepository(), profiles, core);
 
         var results = new ConcurrentBag<AssignmentResult>();
-
-        // Act: 50 tareas compitiendo en paralelo exactamente al mismo tiempo
-        var tasks = allies.Select(ally => Task.Run(async () =>
+        await Task.WhenAll(allies.Select(ally => Task.Run(async () =>
         {
-            var res = await useCase.ExecuteAsync(requestId, tenantId, ally.UserId);
-            results.Add(res);
-        }));
+            current.Value = ally.UserId;
+            results.Add(await useCase.ExecuteAsync(requestId, tenantId, ally.UserId));
+        })));
 
-        await Task.WhenAll(tasks);
+        var winner = Assert.Single(results, r => r.Status == AssignmentStatus.Assigned);
+        var conflicts = results.Where(r => r.Status == AssignmentStatus.Conflict).ToList();
+        Assert.Equal(49, conflicts.Count);
+        Assert.All(conflicts, c => Assert.Null(c.AssignedAllyId));
+        Assert.All(conflicts, c => Assert.Equal("MANI-SOL-409", c.Code));
 
-        // Assert (Exclusión Concurrente RNF-05)
-        var assignedList = results.Where(r => r.Status == AssignmentStatus.Assigned).ToList();
-        var conflictList = results.Where(r => r.Status == AssignmentStatus.Conflict).ToList();
+        // El reintento del ganador es idempotente.
+        var winningAlly = allies.First(a => a.AllyId == winner.AssignedAllyId);
+        current.Value = winningAlly.UserId;
+        var retry = await useCase.ExecuteAsync(requestId, tenantId, winningAlly.UserId);
+        Assert.Equal(AssignmentStatus.AlreadyAssigned, retry.Status);
+    }
 
-        Assert.Single(assignedList); // Exactamente 1 ganador
-        Assert.Equal(49, conflictList.Count); // Exactamente 49 rechazados con conflicto
-
-        var winningAllyId = assignedList.First().AssignedAllyId;
-        Assert.NotNull(winningAllyId);
-
-        // Todos los 49 conflictos deben reportar que la solicitud fue asignada al ganador
-        foreach (var conflict in conflictList)
+    [Fact]
+    public async Task AcceptRequest_With50AlliesAgainstCoreOverHttp_ExactlyOneIsAssigned_And49Get409()
+    {
+        using var server = new FakeCoreServer();
+        var tenantId = Guid.NewGuid();
+        var requestId = server.AddSolicitud(tenantId);
+        var (allies, profiles) = CreateAllies(tenantId, 50);
+        foreach (var ally in allies)
         {
-            Assert.Equal(winningAllyId, conflict.AssignedAllyId);
+            server.RegisterAllyUser(ally.UserId, ally.AllyId);
+        }
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["CORE_SERVICE_URL"] = server.BaseUrl })
+            .Build();
+
+        // Cada aliado llama con su propio JWT, como lo reenvía ForwardAuthorizationHandler.
+        AcceptDispatchOfferUseCase UseCaseFor(Guid userId)
+        {
+            var http = new HttpClient();
+            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
+                "Bearer", TestTokenHelper.CreateTestToken(tenantId, userId.ToString(), "aliado"));
+            var client = new CoreAssignmentClient(http, config, NullLogger<CoreAssignmentClient>.Instance);
+            return new AcceptDispatchOfferUseCase(new InMemorySolicitudAssignmentRepository(), profiles, client);
         }
 
-        // Paridad RPC 005: Un reintento por el aliado ganador DEBE ser idempotente (200 OK)
-        var winningAlly = allies.First(a => a.AllyId == winningAllyId);
-        var retryResult = await useCase.ExecuteAsync(requestId, tenantId, winningAlly.UserId);
+        using var gate = new ManualResetEventSlim(false);
+        var tasks = allies.Select(a => Task.Run(async () =>
+        {
+            var useCase = UseCaseFor(a.UserId);
+            gate.Wait();
+            return (a.AllyId, Result: await useCase.ExecuteAsync(requestId.ToString(), tenantId, a.UserId, $"k-{a.UserId}", "corr-50"));
+        })).ToList();
+        gate.Set();
+        var results = await Task.WhenAll(tasks);
 
-        Assert.Equal(AssignmentStatus.AlreadyAssigned, retryResult.Status);
-        Assert.Equal(winningAllyId, retryResult.AssignedAllyId);
+        var winner = Assert.Single(results, r => r.Result.Status == AssignmentStatus.Assigned);
+        Assert.Equal(49, results.Count(r => r.Result.Status == AssignmentStatus.Conflict));
+        Assert.Equal(winner.AllyId, server.AssignedTo(requestId));
+
+        var retry = await UseCaseFor(allies.First(a => a.AllyId == winner.AllyId).UserId)
+            .ExecuteAsync(requestId.ToString(), tenantId, allies.First(a => a.AllyId == winner.AllyId).UserId);
+        Assert.Equal(AssignmentStatus.AlreadyAssigned, retry.Status);
+    }
+
+    [Fact]
+    public async Task AcceptRequest_WhenTheAllyRejectedItBefore_Returns409R_AndDoesNotCallCore()
+    {
+        var tenantId = Guid.NewGuid();
+        var requestId = Guid.NewGuid();
+        var (allies, profiles) = CreateAllies(tenantId, 1);
+        var repo = new InMemorySolicitudAssignmentRepository();
+        await repo.RejectRequestAsync(requestId, tenantId, allies[0].UserId, allies[0].AllyId, "OTRO");
+        var core = new InMemoryCoreAssignments(profiles, () => allies[0].UserId);
+
+        var result = await new AcceptDispatchOfferUseCase(repo, profiles, core).ExecuteAsync(requestId.ToString(), tenantId, allies[0].UserId);
+
+        Assert.Equal(AssignmentStatus.RejectedBefore, result.Status);
+        Assert.Equal("MANI-DSP-409R", result.Code);
+        Assert.Equal(0, core.Calls);
+    }
+
+    [Fact]
+    public async Task AcceptRequest_PassesTheIdempotencyKeyAndCorrelationIdToCore()
+    {
+        var tenantId = Guid.NewGuid();
+        var requestId = Guid.NewGuid();
+        var (allies, profiles) = CreateAllies(tenantId, 1);
+        var core = new InMemoryCoreAssignments(profiles, () => allies[0].UserId);
+
+        await new AcceptDispatchOfferUseCase(new InMemorySolicitudAssignmentRepository(), profiles, core)
+            .ExecuteAsync(requestId.ToString(), tenantId, allies[0].UserId, "clave-1", "corr-1");
+
+        Assert.Equal((requestId, "clave-1", "corr-1"), core.LastCommand);
     }
 
     [Fact]
     public async Task AcceptRequest_WhenAllyNotVerified_ThrowsUnauthorizedAccessException_WithManiSol403V()
     {
-        // Arrange
-        var repo = new InMemorySolicitudAssignmentRepository();
-        var profiles = new FakeAllyProfiles();
-        var useCase = new AcceptDispatchOfferUseCase(repo, profiles);
-
         var tenantId = Guid.NewGuid();
-        var requestId = Guid.NewGuid().ToString();
+        var profiles = new FakeAllyProfiles();
         var unverifiedUserId = Guid.NewGuid();
+        profiles.RegisterAlly(new AllyProfile(Guid.NewGuid(), tenantId, unverifiedUserId, "PENDIENTE"));
+        var core = new InMemoryCoreAssignments(profiles, () => unverifiedUserId);
+        var useCase = new AcceptDispatchOfferUseCase(new InMemorySolicitudAssignmentRepository(), profiles, core);
 
-        // Aliado con estado pendiente (no verificado)
-        var profile = new AllyProfile(Guid.NewGuid(), tenantId, unverifiedUserId, "PENDIENTE");
-        profiles.RegisterAlly(profile);
-
-        // Act & Assert (DoD §9.3)
         var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-            useCase.ExecuteAsync(requestId, tenantId, unverifiedUserId));
+            useCase.ExecuteAsync(Guid.NewGuid().ToString(), tenantId, unverifiedUserId));
 
         Assert.Contains("MANI-SOL-403V", ex.Message);
+        Assert.Equal(0, core.Calls);
     }
 
     [Fact]
     public async Task AcceptRequest_WhenAllyProfileDoesNotExist_ThrowsUnauthorizedAccessException_AndDoesNotFabricateProfile()
     {
-        // Arrange: Usuario autenticado que NO está registrado como aliado en el tenant
-        var repo = new InMemorySolicitudAssignmentRepository();
         var profiles = new FakeAllyProfiles();
-        var useCase = new AcceptDispatchOfferUseCase(repo, profiles);
-
-        var tenantId = Guid.NewGuid();
-        var requestId = Guid.NewGuid().ToString();
         var unknownUserId = Guid.NewGuid();
+        var core = new InMemoryCoreAssignments(profiles, () => unknownUserId);
+        var useCase = new AcceptDispatchOfferUseCase(new InMemorySolicitudAssignmentRepository(), profiles, core);
 
-        // Act & Assert
         var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-            useCase.ExecuteAsync(requestId, tenantId, unknownUserId));
+            useCase.ExecuteAsync(Guid.NewGuid().ToString(), Guid.NewGuid(), unknownUserId));
 
         Assert.Contains("no existe un perfil de aliado", ex.Message);
+        Assert.Equal(0, core.Calls);
     }
 
     [Fact]
     public async Task PostgresSolicitudAssignmentRepository_WhenDatabaseUnavailable_FailsClosedAndThrows()
     {
-        // Arrange: sin cadena de conexión configurada (ADR-0016: sin BD la aceptación no puede confirmarse)
+        // Sin cadena de conexión no se puede comprobar el rechazo previo: la aceptación no sigue (ADR-0016).
         var mockConfig = new Mock<IConfiguration>();
         var repo = new PostgresSolicitudAssignmentRepository(mockConfig.Object, NullLogger<PostgresSolicitudAssignmentRepository>.Instance);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            repo.AcceptRequestAsync(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()));
+        await Assert.ThrowsAsync<DispatchDatabaseUnavailableException>(() =>
+            repo.HasRejectedAsync(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()));
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            repo.RejectRequestAsync(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "NO_DISPONIBLE"));
+        await Assert.ThrowsAsync<DispatchDatabaseUnavailableException>(() =>
+            repo.RejectRequestAsync(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "OTRO"));
     }
 }

@@ -7,7 +7,7 @@ namespace ManiDispatch.Application.UseCases;
 
 /// <summary>
 /// Solicitudes asignadas al aliado autenticado (SCRUM-853, criterio T1). El aliado se resuelve con Core
-/// por el JWT reenviado, igual que en la aceptación; la asignación se lee del dominio de Dispatch.
+/// por el JWT reenviado, igual que en la aceptación; la asignación se lee con el contexto del aliado (RLS).
 /// </summary>
 public class GetAllyAssignmentsUseCase
 {
@@ -29,6 +29,6 @@ public class GetAllyAssignmentsUseCase
             throw new UnauthorizedAccessException("MANI-SOL-403V: no existe un perfil de aliado asociado a la cuenta en este tenant.");
         }
 
-        return await _assignmentRepository.GetAssignedRequestIdsAsync(tenantId, allyProfile.Id);
+        return await _assignmentRepository.GetAssignedRequestIdsAsync(tenantId, usuarioId, allyProfile.Id);
     }
 }

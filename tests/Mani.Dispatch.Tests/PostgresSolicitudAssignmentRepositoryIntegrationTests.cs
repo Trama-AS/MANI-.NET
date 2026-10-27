@@ -1,16 +1,18 @@
-using ManiDispatch.Application.Interfaces;
+using ManiDispatch.Domain.Exceptions;
 using ManiDispatch.Infrastructure.Repositories;
 using ManiDispatch.Tests.Fixtures;
 using Dapper;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Npgsql;
 using Xunit;
 
 namespace ManiDispatch.Tests;
 
 /// <summary>
-/// Exclusión concurrente (ADR-0016 / RNF-05) de PostgresSolicitudAssignmentRepository contra
-/// PostgreSQL real con el esquema oficial: el UPDATE condicional decide, no la memoria del proceso.
+/// PostgresSolicitudAssignmentRepository contra PostgreSQL real con el esquema oficial. Desde la decisión 6A Dispatch
+/// solo escribe rechazos; la asignación la registra Core y aquí se siembra directo. Cada operación debe fijar el
+/// contexto de la sesión (D-2): el doble de app.set_context del fixture lo registra.
 /// </summary>
 [Collection("Postgres")]
 public class PostgresSolicitudAssignmentRepositoryIntegrationTests
@@ -26,115 +28,93 @@ public class PostgresSolicitudAssignmentRepositoryIntegrationTests
             NullLogger<PostgresSolicitudAssignmentRepository>.Instance);
 
     [Fact]
-    public async Task Accept_AssignsThePendingRequest_AndPersistsIt()
+    public async Task Reject_PersistsTheRejection_WithTheAllyContext_AndRepeatingItIsIdempotent()
     {
         var seed = await DispatchSeed.CreateAsync(_db.ConnectionString);
-        var (aliado, _) = await seed.AddAliadoAsync("Ana");
-        var solicitud = await seed.AddSolicitudAsync();
-
-        var result = await CreateRepository().AcceptRequestAsync(solicitud, seed.TenantId, aliado);
-
-        Assert.Equal(AssignmentStatus.Assigned, result.Status);
-        await using var c = seed.Open();
-        await c.OpenAsync();
-        var row = await c.QuerySingleAsync<(Guid? AliadoId, string Estado)>(
-            "SELECT aliado_id, estado FROM solicitud WHERE id = @solicitud", new { solicitud });
-        Assert.Equal(aliado, row.AliadoId);
-        Assert.Equal("ASIGNADA", row.Estado);
-    }
-
-    [Fact]
-    public async Task Accept_SameAllyTwice_IsIdempotent()
-    {
-        var seed = await DispatchSeed.CreateAsync(_db.ConnectionString);
-        var (aliado, _) = await seed.AddAliadoAsync("Ana");
+        var (aliado, usuario) = await seed.AddAliadoAsync("Ana");
         var solicitud = await seed.AddSolicitudAsync();
         var repo = CreateRepository();
 
-        await repo.AcceptRequestAsync(solicitud, seed.TenantId, aliado);
-        var second = await repo.AcceptRequestAsync(solicitud, seed.TenantId, aliado);
-
-        Assert.Equal(AssignmentStatus.AlreadyAssigned, second.Status);
-    }
-
-    [Fact]
-    public async Task Accept_AnotherAllyAfterAssignment_IsAConflictAndKeepsTheWinner()
-    {
-        var seed = await DispatchSeed.CreateAsync(_db.ConnectionString);
-        var (ganador, _) = await seed.AddAliadoAsync("Ganador");
-        var (perdedor, _) = await seed.AddAliadoAsync("Perdedor");
-        var solicitud = await seed.AddSolicitudAsync();
-        var repo = CreateRepository();
-
-        await repo.AcceptRequestAsync(solicitud, seed.TenantId, ganador);
-        var result = await repo.AcceptRequestAsync(solicitud, seed.TenantId, perdedor);
-
-        Assert.Equal(AssignmentStatus.Conflict, result.Status);
-        Assert.Equal(ganador, result.AssignedAllyId);
-    }
-
-    [Fact]
-    public async Task Accept_RequestOfAnotherTenant_IsNotFound_AndStaysPending()
-    {
-        var seed = await DispatchSeed.CreateAsync(_db.ConnectionString);
-        var other = await DispatchSeed.CreateAsync(_db.ConnectionString);
-        var (aliado, _) = await other.AddAliadoAsync("Ajena");
-        var solicitud = await seed.AddSolicitudAsync();
-
-        var result = await CreateRepository().AcceptRequestAsync(solicitud, other.TenantId, aliado);
-
-        Assert.Equal(AssignmentStatus.NotFound, result.Status);
-        await using var c = seed.Open();
-        await c.OpenAsync();
-        Assert.Equal("PENDIENTE", await c.QuerySingleAsync<string>("SELECT estado FROM solicitud WHERE id = @solicitud", new { solicitud }));
-    }
-
-    [Fact]
-    public async Task Accept_Concurrent50Allies_ExactlyOneWins_And49GetConflict()
-    {
-        var seed = await DispatchSeed.CreateAsync(_db.ConnectionString);
-        var solicitud = await seed.AddSolicitudAsync();
-        var allies = new List<Guid>();
-        for (var i = 0; i < 50; i++)
-        {
-            allies.Add((await seed.AddAliadoAsync($"Aliado {i}")).AliadoId);
-        }
-
-        var repo = CreateRepository();
-        using var gate = new ManualResetEventSlim(false);
-        var tasks = allies.Select(a => Task.Run(async () =>
-        {
-            gate.Wait();
-            return await repo.AcceptRequestAsync(solicitud, seed.TenantId, a);
-        })).ToList();
-        gate.Set();
-        var results = await Task.WhenAll(tasks);
-
-        Assert.Equal(1, results.Count(r => r.Status == AssignmentStatus.Assigned));
-        Assert.Equal(49, results.Count(r => r.Status == AssignmentStatus.Conflict));
-
-        var winner = allies.Single(a => results[allies.IndexOf(a)].Status == AssignmentStatus.Assigned);
-        Assert.All(results.Where(r => r.Status == AssignmentStatus.Conflict), r => Assert.Equal(winner, r.AssignedAllyId));
-        await using var c = seed.Open();
-        await c.OpenAsync();
-        Assert.Equal(winner, await c.QuerySingleAsync<Guid>("SELECT aliado_id FROM solicitud WHERE id = @solicitud", new { solicitud }));
-    }
-
-    [Fact]
-    public async Task Reject_PersistsTheRejection_AndRepeatingItDoesNotDuplicate()
-    {
-        var seed = await DispatchSeed.CreateAsync(_db.ConnectionString);
-        var (aliado, _) = await seed.AddAliadoAsync("Ana");
-        var solicitud = await seed.AddSolicitudAsync();
-        var repo = CreateRepository();
-
-        Assert.True(await repo.RejectRequestAsync(solicitud, seed.TenantId, aliado, "OTRO"));
-        Assert.True(await repo.RejectRequestAsync(solicitud, seed.TenantId, aliado, "OTRO"));
+        Assert.True(await repo.RejectRequestAsync(solicitud, seed.TenantId, usuario, aliado, "FUERA_DE_ZONA"));
+        Assert.False(await repo.RejectRequestAsync(solicitud, seed.TenantId, usuario, aliado, "OTRO"));
 
         await using var c = seed.Open();
         await c.OpenAsync();
-        Assert.Equal(1, await c.QuerySingleAsync<int>(
-            "SELECT count(*) FROM solicitud_rechazo WHERE solicitud_id = @solicitud AND aliado_id = @aliado", new { solicitud, aliado }));
+        var motivos = (await c.QueryAsync<string>(
+            "SELECT motivo FROM solicitud_rechazo WHERE solicitud_id = @solicitud AND aliado_id = @aliado", new { solicitud, aliado })).ToList();
+        Assert.Equal(new[] { "FUERA_DE_ZONA" }, motivos);
+        Assert.All(await seed.ContextosAsync(), ctx => Assert.Equal((usuario, "aliado"), (ctx.UserId!.Value, ctx.Role)));
+    }
+
+    [Fact]
+    public async Task Reject_WithoutReason_StoresNull_WhichTheCheckAllows()
+    {
+        var seed = await DispatchSeed.CreateAsync(_db.ConnectionString);
+        var (aliado, usuario) = await seed.AddAliadoAsync("Ana");
+        var solicitud = await seed.AddSolicitudAsync();
+
+        Assert.True(await CreateRepository().RejectRequestAsync(solicitud, seed.TenantId, usuario, aliado, null));
+
+        await using var c = seed.Open();
+        await c.OpenAsync();
+        Assert.Null(await c.QuerySingleAsync<string?>(
+            "SELECT motivo FROM solicitud_rechazo WHERE solicitud_id = @solicitud AND aliado_id = @aliado", new { solicitud, aliado }));
+    }
+
+    [Fact]
+    public async Task Reject_WithTheOldDefaultReason_FailsTheCheck_AndNothingIsStored()
+    {
+        // N-1: el antiguo motivo por defecto NO_DISPONIBLE no está en el CHECK; el caso de uso ya no lo envía.
+        var seed = await DispatchSeed.CreateAsync(_db.ConnectionString);
+        var (aliado, usuario) = await seed.AddAliadoAsync("Ana");
+        var solicitud = await seed.AddSolicitudAsync();
+
+        var error = await Assert.ThrowsAsync<DispatchDatabaseUnavailableException>(() =>
+            CreateRepository().RejectRequestAsync(solicitud, seed.TenantId, usuario, aliado, "NO_DISPONIBLE"));
+
+        Assert.IsType<PostgresException>(error.InnerException);
+        await using var c = seed.Open();
+        await c.OpenAsync();
+        Assert.Equal(0, await c.QuerySingleAsync<int>("SELECT count(*) FROM solicitud_rechazo WHERE solicitud_id = @solicitud", new { solicitud }));
+    }
+
+    [Fact]
+    public async Task RejectionQueries_ReturnOnlyTheRowsOfTheAllyAndTheRequest()
+    {
+        var seed = await DispatchSeed.CreateAsync(_db.ConnectionString);
+        var (ana, usuarioAna) = await seed.AddAliadoAsync("Ana");
+        var (beto, usuarioBeto) = await seed.AddAliadoAsync("Beto");
+        var primera = await seed.AddSolicitudAsync();
+        var segunda = await seed.AddSolicitudAsync();
+        var repo = CreateRepository();
+        await repo.RejectRequestAsync(primera, seed.TenantId, usuarioAna, ana, "OTRO");
+        await repo.RejectRequestAsync(segunda, seed.TenantId, usuarioAna, ana, null);
+        await repo.RejectRequestAsync(primera, seed.TenantId, usuarioBeto, beto, "SIN_DISPONIBILIDAD");
+
+        Assert.True(await repo.HasRejectedAsync(primera, seed.TenantId, usuarioAna, ana));
+        Assert.False(await repo.HasRejectedAsync(segunda, seed.TenantId, usuarioBeto, beto));
+        Assert.Equal(new[] { primera, segunda }.OrderBy(x => x), (await repo.GetRejectedRequestIdsAsync(seed.TenantId, usuarioAna, ana)).OrderBy(x => x));
+
+        var cliente = Guid.NewGuid();
+        Assert.Equal(new[] { ana, beto }.OrderBy(x => x), (await repo.GetRejectedAllyIdsAsync(primera, seed.TenantId, cliente, "cliente")).OrderBy(x => x));
+
+        var otro = await DispatchSeed.CreateAsync(_db.ConnectionString);
+        Assert.Empty(await repo.GetRejectedAllyIdsAsync(primera, otro.TenantId, cliente, "cliente"));
+        Assert.Contains((cliente, "cliente"), (await seed.ContextosAsync()).Select(c => (c.UserId!.Value, c.Role)));
+    }
+
+    [Fact]
+    public async Task AssignedRequestIds_AreReadWithTheAllyContext()
+    {
+        var seed = await DispatchSeed.CreateAsync(_db.ConnectionString);
+        var (aliado, usuario) = await seed.AddAliadoAsync("Ana");
+        var asignada = await seed.AddSolicitudAsync();
+        await seed.AssignAsync(asignada, aliado);
+
+        var ids = await CreateRepository().GetAssignedRequestIdsAsync(seed.TenantId, usuario, aliado);
+
+        Assert.Equal(new[] { asignada }, ids);
+        Assert.Equal(new[] { (usuario, "aliado") }, (await seed.ContextosAsync()).Select(c => (c.UserId!.Value, c.Role)));
     }
 
     [Fact]
@@ -143,7 +123,7 @@ public class PostgresSolicitudAssignmentRepositoryIntegrationTests
         var repo = new PostgresSolicitudAssignmentRepository(
             new ConfigurationBuilder().Build(), NullLogger<PostgresSolicitudAssignmentRepository>.Instance);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => repo.AcceptRequestAsync(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => repo.RejectRequestAsync(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "OTRO"));
+        await Assert.ThrowsAsync<DispatchDatabaseUnavailableException>(() => repo.RejectRequestAsync(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "OTRO"));
+        await Assert.ThrowsAsync<DispatchDatabaseUnavailableException>(() => repo.HasRejectedAsync(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()));
     }
 }

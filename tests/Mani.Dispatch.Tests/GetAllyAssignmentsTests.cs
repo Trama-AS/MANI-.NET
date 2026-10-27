@@ -69,8 +69,8 @@ public class GetAllyAssignmentsTests
     {
         var mia = Guid.NewGuid();
         var ajena = Guid.NewGuid();
-        await _assignments.AcceptRequestAsync(mia, _tenantId, _aliadoId);
-        await _assignments.AcceptRequestAsync(ajena, _tenantId, Guid.NewGuid());
+        _assignments.MarkAssigned(mia, _aliadoId);
+        _assignments.MarkAssigned(ajena, Guid.NewGuid());
 
         var ids = await new GetAllyAssignmentsUseCase(_assignments, _allyProfiles).ExecuteAsync(_tenantId, _usuarioId);
 
@@ -89,7 +89,7 @@ public class GetAllyAssignmentsTests
     public async Task Get_WithAllyToken_Returns200WithItsAssignments()
     {
         var mia = Guid.NewGuid();
-        await _assignments.AcceptRequestAsync(mia, _tenantId, _aliadoId);
+        _assignments.MarkAssigned(mia, _aliadoId);
         var token = TestTokenHelper.CreateTestToken(_tenantId, _usuarioId.ToString(), "aliado");
 
         var result = await Controller(token: token).GetMyAssignments(null);
@@ -182,7 +182,7 @@ public class GetAllyAssignmentsTests
     public async Task Get_WhenTheDatabaseFails_Returns503()
     {
         var db = new Mock<ISolicitudAssignmentRepository>();
-        db.Setup(r => r.GetAssignedRequestIdsAsync(It.IsAny<Guid>(), It.IsAny<Guid>()))
+        db.Setup(r => r.GetAssignedRequestIdsAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<Guid>()))
             .ThrowsAsync(new InvalidOperationException("conexión rechazada"));
         var token = TestTokenHelper.CreateTestToken(_tenantId, _usuarioId.ToString(), "aliado");
 
@@ -212,16 +212,17 @@ public class PostgresAllyAssignmentsIntegrationTests
     {
         var seed = await DispatchSeed.CreateAsync(_db.ConnectionString);
         var other = await DispatchSeed.CreateAsync(_db.ConnectionString);
-        var (aliado, _) = await seed.AddAliadoAsync("Ana");
+        var (aliado, usuario) = await seed.AddAliadoAsync("Ana");
         var (otroAliado, _) = await seed.AddAliadoAsync("Beto");
         var repo = CreateRepository();
 
+        // La asignación la registra Core (decisión 6A): se siembra directo en la tabla.
         var asignada = await seed.AddSolicitudAsync();
-        await repo.AcceptRequestAsync(asignada, seed.TenantId, aliado);
+        await seed.AssignAsync(asignada, aliado);
         var deOtro = await seed.AddSolicitudAsync();
-        await repo.AcceptRequestAsync(deOtro, seed.TenantId, otroAliado);
+        await seed.AssignAsync(deOtro, otroAliado);
         var cancelada = await seed.AddSolicitudAsync();
-        await repo.AcceptRequestAsync(cancelada, seed.TenantId, aliado);
+        await seed.AssignAsync(cancelada, aliado);
         await using (var c = seed.Open())
         {
             await c.OpenAsync();
@@ -229,8 +230,8 @@ public class PostgresAllyAssignmentsIntegrationTests
         }
         await seed.AddSolicitudAsync(); // pendiente, sin aliado
 
-        var ids = await repo.GetAssignedRequestIdsAsync(seed.TenantId, aliado);
-        var otroTenant = await repo.GetAssignedRequestIdsAsync(other.TenantId, aliado);
+        var ids = await repo.GetAssignedRequestIdsAsync(seed.TenantId, usuario, aliado);
+        var otroTenant = await repo.GetAssignedRequestIdsAsync(other.TenantId, usuario, aliado);
 
         Assert.Equal(new[] { asignada }, ids);
         Assert.Empty(otroTenant);
@@ -249,7 +250,7 @@ public class PostgresAllyAssignmentsIntegrationTests
                 .Build(),
             NullLogger<PostgresSolicitudAssignmentRepository>.Instance);
 
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => repo.GetAssignedRequestIdsAsync(Guid.NewGuid(), Guid.NewGuid()));
+        var error = await Assert.ThrowsAsync<DispatchDatabaseUnavailableException>(() => repo.GetAssignedRequestIdsAsync(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()));
         Assert.NotNull(error.InnerException);
     }
 }

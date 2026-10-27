@@ -4,21 +4,32 @@ using ManiDispatch.Application.Interfaces;
 
 namespace ManiDispatch.Application.UseCases;
 
+/// <summary>
+/// Aceptación de una oferta (SCRUM-1403). Decisión 6A: Dispatch valida al aliado y que no haya rechazado la oferta,
+/// y le pide a Core, dueño del estado de la solicitud, que registre la asignación de forma atómica e idempotente.
+/// </summary>
 public class AcceptDispatchOfferUseCase
 {
     private readonly ISolicitudAssignmentRepository _assignmentRepository;
     private readonly IAllyRepository _allyRepository;
+    private readonly ICoreAssignmentClient _coreAssignmentClient;
 
-    public AcceptDispatchOfferUseCase(ISolicitudAssignmentRepository assignmentRepository, IAllyRepository allyRepository)
+    public AcceptDispatchOfferUseCase(
+        ISolicitudAssignmentRepository assignmentRepository,
+        IAllyRepository allyRepository,
+        ICoreAssignmentClient coreAssignmentClient)
     {
         _assignmentRepository = assignmentRepository ?? throw new ArgumentNullException(nameof(assignmentRepository));
         _allyRepository = allyRepository ?? throw new ArgumentNullException(nameof(allyRepository));
+        _coreAssignmentClient = coreAssignmentClient ?? throw new ArgumentNullException(nameof(coreAssignmentClient));
     }
 
     public async Task<AssignmentResult> ExecuteAsync(
-        string requestId, 
-        Guid tenantId, 
-        Guid usuarioId)
+        string requestId,
+        Guid tenantId,
+        Guid usuarioId,
+        string? idempotencyKey = null,
+        string? correlationId = null)
     {
         if (string.IsNullOrWhiteSpace(requestId))
         {
@@ -44,7 +55,13 @@ public class AcceptDispatchOfferUseCase
             throw new UnauthorizedAccessException("MANI-SOL-403V: tu registro como aliado aún no está verificado.");
         }
 
-        // 2. Ejecutar asignación atómica y con exclusión concurrente
-        return await _assignmentRepository.AcceptRequestAsync(requestGuid, tenantId, allyProfile.Id);
+        // 2. Quien ya rechazó la oferta no puede aceptarla después (N-3, SCRUM-1404).
+        if (await _assignmentRepository.HasRejectedAsync(requestGuid, tenantId, usuarioId, allyProfile.Id))
+        {
+            return new AssignmentResult(AssignmentStatus.RejectedBefore, null, "Ya rechazaste esta solicitud.", "MANI-DSP-409R");
+        }
+
+        // 3. Core registra la asignación con exclusión concurrente (bloqueo de fila y UPDATE condicional).
+        return await _coreAssignmentClient.AssignAsync(requestGuid, tenantId, idempotencyKey, correlationId);
     }
 }

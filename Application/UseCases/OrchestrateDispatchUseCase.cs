@@ -12,19 +12,26 @@ public class OrchestrateDispatchUseCase
 {
     private readonly IAllyRepository _allyRepository;
     private readonly IDispatchPublisher _dispatchPublisher;
+    private readonly ISolicitudAssignmentRepository? _assignmentRepository;
 
     public OrchestrateDispatchUseCase(
         IAllyRepository allyRepository,
-        IDispatchPublisher dispatchPublisher)
+        IDispatchPublisher dispatchPublisher,
+        ISolicitudAssignmentRepository? assignmentRepository = null)
     {
         _allyRepository = allyRepository ?? throw new ArgumentNullException(nameof(allyRepository));
         _dispatchPublisher = dispatchPublisher ?? throw new ArgumentNullException(nameof(dispatchPublisher));
+        _assignmentRepository = assignmentRepository;
     }
 
+    /// <param name="usuarioId">Cliente o admin que despacha: con su contexto se leen los rechazos (SCRUM-1404).</param>
+    /// <param name="role">Rol de la sesión (cliente o admin_tenant).</param>
     public async Task<OrchestrateResponseDto> ExecuteAsync(
         OrchestrateRequestDto request,
         string correlationId,
-        Guid tenantId)
+        Guid tenantId,
+        Guid? usuarioId = null,
+        string? role = null)
     {
         if (request == null)
         {
@@ -51,12 +58,11 @@ public class OrchestrateDispatchUseCase
             throw new KeyNotFoundException($"Solicitud con ID '{request.RequestId}' no encontrada para el tenant autenticado.");
         }
 
-        if (string.Equals(solicitud.Estado, "ASIGNADA", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(solicitud.Estado, "CANCELADA", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(solicitud.Estado, "FINALIZADA", StringComparison.OrdinalIgnoreCase))
+        // D-6: solo se despacha una solicitud PENDIENTE; cualquier otro estado ya salió del broadcast.
+        if (!string.Equals(solicitud.Estado, "PENDIENTE", StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException(
-                $"La solicitud '{request.RequestId}' ya se encuentra en estado '{solicitud.Estado}' y no admite nuevo despacho.");
+                $"MANI-DSP-409E: la solicitud '{request.RequestId}' ya se encuentra en estado '{solicitud.Estado}' y no admite nuevo despacho.");
         }
 
         resolvedZonaGuid = solicitud.ZonaId;
@@ -89,6 +95,13 @@ public class OrchestrateDispatchUseCase
             };
         }
 
+        // Los aliados que ya rechazaron no reciben otra vez la oferta (SCRUM-1404): Dispatch se los pasa a Core.
+        IReadOnlyCollection<Guid> excludeAllyIds = Array.Empty<Guid>();
+        if (_assignmentRepository != null && usuarioId.HasValue && !string.IsNullOrWhiteSpace(role))
+        {
+            excludeAllyIds = await _assignmentRepository.GetRejectedAllyIdsAsync(requestGuid, tenantId, usuarioId.Value, role);
+        }
+
         var criteria = new MatchCriteria
         {
             TenantId = tenantId,
@@ -96,7 +109,9 @@ public class OrchestrateDispatchUseCase
             ZonaId = resolvedZonaGuid,
             CategoriaId = resolvedCategoriaGuid,
             Page = 1,
-            PageSize = 50
+            PageSize = 50,
+            CorrelationId = correlationId,
+            ExcludeAllyIds = excludeAllyIds
         };
 
         var (allies, totalCount) = await _allyRepository.GetEligibleAlliesAsync(criteria);
