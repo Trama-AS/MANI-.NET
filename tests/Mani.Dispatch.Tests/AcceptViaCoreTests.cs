@@ -152,13 +152,15 @@ public class AcceptViaCoreTests
     {
         var id = Guid.NewGuid();
         var handler = new StubHandler(_ => Json(HttpStatusCode.OK,
-            $"{{\"items\":[{{\"id\":\"{id}\",\"estado\":\"PENDIENTE\",\"esMia\":false,\"categoria\":\"Plomeria\",\"zona\":\"Chapinero\",\"reglasSitio\":{{\"epp\":true}},\"direccion\":null,\"creadaEn\":\"2026-10-27T10:00:00.000Z\",\"asignadaEn\":null}}],\"correlationId\":\"c\"}}"));
+            $"{{\"items\":[{{\"id\":\"{id}\",\"estado\":\"PENDIENTE\",\"esMia\":false,\"categoria\":\"Plomeria\",\"descripcion\":\"Gotea el lavaplatos\",\"fotos\":2,\"zona\":\"Chapinero\",\"reglasSitio\":{{\"epp\":true}},\"direccion\":null,\"creadaEn\":\"2026-10-27T10:00:00.000Z\",\"asignadaEn\":null}}],\"correlationId\":\"c\"}}"));
 
         var offers = await CreateClient(handler).GetOwnOffersAsync(Guid.NewGuid(), "corr-1");
 
         var offer = Assert.Single(offers);
         Assert.Equal(id, offer.Id);
         Assert.Equal("Plomeria", offer.Categoria);
+        Assert.Equal("Gotea el lavaplatos", offer.Descripcion);
+        Assert.Equal(2, offer.Fotos);
         Assert.False(offer.EsMia);
         Assert.Null(offer.Direccion);
         Assert.True(offer.ReglasSitio!.Value.GetProperty("epp").GetBoolean());

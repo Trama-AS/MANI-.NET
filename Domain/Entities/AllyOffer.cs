@@ -14,6 +14,8 @@ public class AllyOffer
     public bool EsMia { get; set; }
     public string? Categoria { get; set; }
     public string? FlujoOperativo { get; set; }
+    public string? Descripcion { get; set; }
+    public int Fotos { get; set; }
     public string? Zona { get; set; }
     public string? ZonaPadre { get; set; }
     public JsonElement? ReglasSitio { get; set; }
