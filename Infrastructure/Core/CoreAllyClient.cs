@@ -42,9 +42,10 @@ public class CoreAllyClient : IAllyRepository
     {
         var url = $"{RequireBaseUrl()}/api/v1/allies/eligible" +
                   $"?categoriaId={criteria.CategoriaId}&zonaId={criteria.ZonaId}&page={criteria.Page}&pageSize={criteria.PageSize}";
-        if (criteria.RequestId.HasValue)
+        // Los rechazos son dominio de Dispatch (T1): se mandan como lista y Core los quita antes de paginar.
+        if (criteria.ExcludeAllyIds.Count > 0)
         {
-            url += $"&requestId={criteria.RequestId.Value}";
+            url += $"&excludeAllyIds={string.Join(",", criteria.ExcludeAllyIds.Distinct())}";
         }
 
         if (!string.IsNullOrWhiteSpace(criteria.Tipo))
@@ -53,6 +54,7 @@ public class CoreAllyClient : IAllyRepository
         }
 
         using var response = await SendAsync(url, criteria.TenantId, criteria.CorrelationId);
+        ThrowIfAccessDenied(response, "la elegibilidad de aliados");
         if (!response.IsSuccessStatusCode)
         {
             _logger.LogError("Core respondió {StatusCode} al consultar la elegibilidad de aliados.", (int)response.StatusCode);
@@ -72,6 +74,7 @@ public class CoreAllyClient : IAllyRepository
         {
             return null;
         }
+        ThrowIfAccessDenied(response, "el contexto de la solicitud");
         if (!response.IsSuccessStatusCode)
         {
             _logger.LogError("Core respondió {StatusCode} al consultar el contexto de la solicitud {RequestId}.", (int)response.StatusCode, requestId);
@@ -108,6 +111,16 @@ public class CoreAllyClient : IAllyRepository
         }
 
         return profile;
+    }
+
+    // Un 401/403 de Core es la sesión rechazada, no una caída: se responde 403, no 503 (T2/T5).
+    private void ThrowIfAccessDenied(HttpResponseMessage response, string recurso)
+    {
+        if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+        {
+            _logger.LogWarning("Core respondió {StatusCode} al consultar {Recurso}: sesión sin acceso.", (int)response.StatusCode, recurso);
+            throw new CoreAccessDeniedException($"Core negó el acceso a {recurso}.");
+        }
     }
 
     private string RequireBaseUrl()

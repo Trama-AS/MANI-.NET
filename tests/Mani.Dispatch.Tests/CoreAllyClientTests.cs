@@ -77,7 +77,7 @@ public class CoreAllyClientTests
         Assert.StartsWith("http://core.test/api/v1/allies/eligible?", request.RequestUri!.ToString());
         Assert.Contains($"categoriaId={criteria.CategoriaId}", request.RequestUri.Query);
         Assert.Contains($"zonaId={criteria.ZonaId}", request.RequestUri.Query);
-        Assert.Contains($"requestId={criteria.RequestId}", request.RequestUri.Query);
+        Assert.DoesNotContain("requestId=", request.RequestUri.Query);
         Assert.Contains("page=2", request.RequestUri.Query);
         Assert.Equal(criteria.TenantId.ToString(), request.Headers.GetValues("X-Tenant-Id").Single());
         Assert.Equal("corr-1", request.Headers.GetValues("X-Correlation-ID").Single());
@@ -129,12 +129,36 @@ public class CoreAllyClientTests
     [Theory]
     [InlineData(HttpStatusCode.InternalServerError)]
     [InlineData(HttpStatusCode.NotFound)]
-    [InlineData(HttpStatusCode.Unauthorized)]
     public async Task GetEligibleAlliesAsync_WhenCoreReturnsError_ThrowsUnavailable(HttpStatusCode status)
     {
         var client = CreateClient(new StubHandler(_ => Json(status, "{}")));
 
         await Assert.ThrowsAsync<CoreServiceUnavailableException>(() => client.GetEligibleAlliesAsync(Criteria()));
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    public async Task WhenCoreRejectsTheSession_ThrowsAccessDenied_NotUnavailable(HttpStatusCode status)
+    {
+        var client = CreateClient(new StubHandler(_ => Json(status, "{\"code\":\"MANI-DSP-403\"}")));
+
+        await Assert.ThrowsAsync<CoreAccessDeniedException>(() => client.GetEligibleAlliesAsync(Criteria()));
+        await Assert.ThrowsAsync<CoreAccessDeniedException>(() => client.GetSolicitudContextAsync(Guid.NewGuid(), Guid.NewGuid()));
+    }
+
+    [Fact]
+    public async Task GetEligibleAlliesAsync_SendsTheRejectedAlliesAsExcludeAllyIds()
+    {
+        var handler = new StubHandler(_ => Json(HttpStatusCode.OK, "{\"allies\":[],\"totalCount\":0}"));
+        var criteria = Criteria(Guid.NewGuid());
+        var a = Guid.NewGuid();
+        var b = Guid.NewGuid();
+        criteria.ExcludeAllyIds = new[] { a, b, a };
+
+        await CreateClient(handler).GetEligibleAlliesAsync(criteria);
+
+        Assert.Contains($"excludeAllyIds={a},{b}", Uri.UnescapeDataString(handler.LastRequest!.RequestUri!.Query));
     }
 
     [Fact]
@@ -169,7 +193,7 @@ public class CoreAllyClientTests
         var zonaId = Guid.NewGuid();
         var categoriaId = Guid.NewGuid();
         var handler = new StubHandler(_ => Json(HttpStatusCode.OK,
-            $"{{\"id\":\"{requestId}\",\"tenantId\":\"{tenantId}\",\"zonaId\":\"{zonaId}\",\"categoriaId\":\"{categoriaId}\",\"estado\":\"PUBLICADA\"}}"));
+            $"{{\"id\":\"{requestId}\",\"tenantId\":\"{tenantId}\",\"zonaId\":\"{zonaId}\",\"categoriaId\":\"{categoriaId}\",\"estado\":\"PENDIENTE\",\"esMia\":true}}"));
         var client = CreateClient(handler);
 
         var context = await client.GetSolicitudContextAsync(requestId, tenantId);
@@ -177,6 +201,7 @@ public class CoreAllyClientTests
         Assert.NotNull(context);
         Assert.Equal(zonaId, context!.ZonaId);
         Assert.Equal(categoriaId, context.CategoriaId);
+        Assert.True(context.EsMia);
         Assert.Equal($"http://core.test/api/v1/solicitudes/{requestId}/context", handler.LastRequest!.RequestUri!.ToString());
         Assert.Equal(tenantId.ToString(), handler.LastRequest.Headers.GetValues("X-Tenant-Id").Single());
     }

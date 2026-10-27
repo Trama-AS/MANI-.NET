@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using ManiDispatch.Application.DTOs;
@@ -13,17 +14,59 @@ public class GetEligibleAlliesUseCase
     public static readonly string[] TiposAliado = { "PERSONA_NATURAL", "PERSONA_JURIDICA", "EMPLEADO_DIRECTO" };
 
     private readonly IAllyRepository _allyRepository;
+    private readonly ISolicitudAssignmentRepository? _assignmentRepository;
 
-    public GetEligibleAlliesUseCase(IAllyRepository allyRepository)
+    public GetEligibleAlliesUseCase(IAllyRepository allyRepository, ISolicitudAssignmentRepository? assignmentRepository = null)
     {
         _allyRepository = allyRepository ?? throw new ArgumentNullException(nameof(allyRepository));
+        _assignmentRepository = assignmentRepository;
+    }
+
+    /// <summary>
+    /// Aliados elegibles para una solicitud del cliente o del admin (SCRUM-1398/1400). Zona y categoría salen siempre
+    /// del contexto que entrega Core, nunca de la consulta, y se excluyen los aliados que ya la rechazaron.
+    /// </summary>
+    /// <exception cref="KeyNotFoundException">La solicitud no existe o la sesión no puede verla.</exception>
+    public async Task<MatchResponseDto> ExecuteForRequestAsync(
+        Guid requestId,
+        Guid tenantId,
+        Guid usuarioId,
+        string role,
+        string? tipo,
+        int? page,
+        int? pageSize,
+        string correlationId)
+    {
+        var solicitud = await _allyRepository.GetSolicitudContextAsync(requestId, tenantId);
+        if (solicitud == null)
+        {
+            throw new KeyNotFoundException($"Solicitud con ID '{requestId}' no encontrada para el tenant autenticado.");
+        }
+
+        IReadOnlyCollection<Guid> excludeAllyIds = _assignmentRepository != null
+            ? await _assignmentRepository.GetRejectedAllyIdsAsync(requestId, tenantId, usuarioId, role)
+            : Array.Empty<Guid>();
+
+        var request = new MatchRequestDto
+        {
+            TenantId = tenantId.ToString(),
+            RequestId = requestId.ToString(),
+            ZonaId = solicitud.ZonaId.ToString(),
+            CategoriaId = solicitud.CategoriaId.ToString(),
+            Tipo = tipo,
+            Page = page,
+            PageSize = pageSize
+        };
+
+        return await ExecuteAsync(request, correlationId, tenantId, requestId.ToString(), excludeAllyIds);
     }
 
     public async Task<MatchResponseDto> ExecuteAsync(
-        MatchRequestDto request, 
-        string correlationId, 
-        Guid tenantId, 
-        string? requestId = null)
+        MatchRequestDto request,
+        string correlationId,
+        Guid tenantId,
+        string? requestId = null,
+        IReadOnlyCollection<Guid>? excludeAllyIds = null)
     {
         if (request == null)
         {
@@ -77,7 +120,9 @@ public class GetEligibleAlliesUseCase
             CategoriaId = categoriaGuid,
             Tipo = tipo,
             Page = page,
-            PageSize = pageSize
+            PageSize = pageSize,
+            CorrelationId = correlationId,
+            ExcludeAllyIds = excludeAllyIds ?? Array.Empty<Guid>()
         };
 
         var (allies, totalCount) = await _allyRepository.GetEligibleAlliesAsync(criteria);

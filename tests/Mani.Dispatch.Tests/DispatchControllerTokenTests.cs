@@ -31,9 +31,9 @@ public class DispatchControllerTokenTests
         Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Development");
 
         _controller = new DispatchController(
-            new GetEligibleAlliesUseCase(_repo.Object),
-            new OrchestrateDispatchUseCase(_repo.Object, _publisher.Object),
-            new AcceptDispatchOfferUseCase(_assignments, _repo.Object),
+            new GetEligibleAlliesUseCase(_repo.Object, _assignments),
+            new OrchestrateDispatchUseCase(_repo.Object, _publisher.Object, _assignments),
+            new AcceptDispatchOfferUseCase(_assignments, _repo.Object, new Mock<ICoreAssignmentClient>(MockBehavior.Strict).Object),
             new RejectDispatchOfferUseCase(_assignments, _repo.Object))
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
@@ -98,6 +98,6 @@ public class DispatchControllerTokenTests
     {
         UseToken(kind);
         AssertUnauthorized(await _controller.GetEligibleAlliesForRequest(
-            Guid.NewGuid().ToString(), Guid.NewGuid().ToString(), Guid.NewGuid().ToString(), 1, 10));
+            Guid.NewGuid().ToString(), 1, 10));
     }
 }
