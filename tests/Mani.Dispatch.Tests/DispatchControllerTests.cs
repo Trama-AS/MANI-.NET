@@ -900,7 +900,7 @@ public class DispatchControllerTests
     {
         var reqId = RegisterOffer();
         var (_, token) = RegisterAllyToken();
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {token}";
 
         var result = await _controller.RejectRequest(reqId.ToString(), new RejectRequestDto(motivo, detalle));
 
@@ -928,7 +928,7 @@ public class DispatchControllerTests
     public async Task RejectRequest_DetailOf280Characters_IsAccepted_281_IsRejected()
     {
         var (_, token) = RegisterAllyToken();
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {token}";
 
         var limite = await _controller.RejectRequest(RegisterOffer().ToString(), new RejectRequestDto("OTRO", new string('a', 280)));
         var excedido = await _controller.RejectRequest(RegisterOffer().ToString(), new RejectRequestDto("OTRO", new string('a', 281)));
@@ -961,7 +961,7 @@ public class DispatchControllerTests
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
         };
         var token = TestTokenHelper.CreateTestToken(_testTenantId, allyUserId.ToString(), "aliado");
-        controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
+        controller.HttpContext.Request.Headers.Authorization = $"Bearer {token}";
 
         var sinMotivo = await controller.RejectRequest(reqId.ToString(), new RejectRequestDto(null));
         var otroSinDetalle = await controller.RejectRequest(reqId.ToString(), new RejectRequestDto("OTRO"));
