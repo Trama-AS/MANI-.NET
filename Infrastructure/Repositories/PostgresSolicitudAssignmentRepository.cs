@@ -35,15 +35,15 @@ public class PostgresSolicitudAssignmentRepository : ISolicitudAssignmentReposit
             : null;
     }
 
-    public Task<bool> RejectRequestAsync(Guid requestId, Guid tenantId, Guid usuarioId, Guid aliadoId, string motivo, string? detalle)
+    public Task<bool> RejectRequestAsync(Guid requestId, Guid tenantId, Guid usuarioId, Guid aliadoId, string? motivo)
     {
         const string sql = @"
-            INSERT INTO solicitud_rechazo (tenant_id, solicitud_id, aliado_id, motivo, detalle)
-            VALUES (@TenantId, @RequestId, @AliadoId, @Motivo, @Detalle)
+            INSERT INTO solicitud_rechazo (tenant_id, solicitud_id, aliado_id, motivo)
+            VALUES (@TenantId, @RequestId, @AliadoId, @Motivo)
             ON CONFLICT (solicitud_id, aliado_id) DO NOTHING;";
 
         return WithTenantContextAsync(tenantId, usuarioId, RolAliado, "registrar el rechazo", async (connection, tx) =>
-            await connection.ExecuteAsync(sql, new { TenantId = tenantId, RequestId = requestId, AliadoId = aliadoId, Motivo = motivo, Detalle = detalle }, tx) == 1);
+            await connection.ExecuteAsync(sql, new { TenantId = tenantId, RequestId = requestId, AliadoId = aliadoId, Motivo = motivo }, tx) == 1);
     }
 
     public Task<bool> HasRejectedAsync(Guid requestId, Guid tenantId, Guid usuarioId, Guid aliadoId)

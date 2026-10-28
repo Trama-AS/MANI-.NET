@@ -194,8 +194,8 @@ public class AcceptViaCoreTests
         core.Offers.Add(new AllyOffer { Id = rechazada, Estado = "PENDIENTE" });
         core.Offers.Add(new AllyOffer { Id = mia, Estado = "ASIGNADA", EsMia = true });
         var repo = new InMemorySolicitudAssignmentRepository();
-        await repo.RejectRequestAsync(rechazada, tenantId, usuarioId, allyId, "SIN_DISPONIBILIDAD", null);
-        await repo.RejectRequestAsync(mia, tenantId, usuarioId, allyId, "FUERA_DE_ZONA", null); // rechazo viejo de algo que luego ganó
+        await repo.RejectRequestAsync(rechazada, tenantId, usuarioId, allyId, "OTRO");
+        await repo.RejectRequestAsync(mia, tenantId, usuarioId, allyId, null); // rechazo viejo de algo que luego ganó
 
         var offers = await new GetAllyOffersUseCase(core, repo, profiles).ExecuteAsync(tenantId, usuarioId, "corr");
 

@@ -159,7 +159,7 @@ public class JwtAuthHelperTests
         var claims = new[]
         {
             new System.Security.Claims.Claim("sub", "user-1"),
-            new System.Security.Claims.Claim("app_metadata", "{\"tenant_id\":\"not-a-guid\",\"user_role\":\"aliado\"}", System.IdentityModel.Tokens.Jwt.JsonClaimValueTypes.Json)
+            new System.Security.Claims.Claim("app_metadata", "{\"tenant_id\":\"not-a-guid\"}", System.IdentityModel.Tokens.Jwt.JsonClaimValueTypes.Json)
         };
         var descriptor = new Microsoft.IdentityModel.Tokens.SecurityTokenDescriptor
         {
