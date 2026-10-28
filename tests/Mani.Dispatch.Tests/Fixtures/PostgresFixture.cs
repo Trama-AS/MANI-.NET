@@ -5,7 +5,8 @@ using Xunit;
 namespace ManiDispatch.Tests.Fixtures;
 
 /// <summary>
-/// PostgreSQL 15 real en un contenedor, con las migraciones oficiales 001-008 del Gateway.
+/// PostgreSQL 15 real en un contenedor, con las migraciones oficiales 001-008 del Gateway y las de Core que tocan
+/// tablas de Dispatch (Database/core).
 /// Se crea una sola vez por colección; cada prueba siembra sus propios datos con un tenant nuevo.
 /// </summary>
 public sealed class PostgresFixture : IAsyncLifetime
@@ -57,6 +58,13 @@ public sealed class PostgresFixture : IAsyncLifetime
                     'app_metadata', json_build_object('tenant_id', p_tenant_id, 'user_role', lower(p_user_role)))::text, true);
                 INSERT INTO app.contexto_registrado (tenant_id, user_id, user_role) VALUES (p_tenant_id, p_user_id, lower(p_user_role));
             END $$;");
+
+        // Migraciones de Core (MANI-Node) sobre tablas de Dispatch, p. ej. 0025: motivo de rechazo obligatorio.
+        var coreDir = Path.Combine(AppContext.BaseDirectory, "Database", "core");
+        foreach (var file in Directory.GetFiles(coreDir, "*.sql").OrderBy(f => f, StringComparer.Ordinal))
+        {
+            await Execute(connection, await File.ReadAllTextAsync(file));
+        }
     }
 
     public Task DisposeAsync() => _container.DisposeAsync().AsTask();

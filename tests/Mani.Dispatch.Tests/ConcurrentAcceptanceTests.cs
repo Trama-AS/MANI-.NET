@@ -119,7 +119,7 @@ public class ConcurrentAcceptanceTests
         var requestId = Guid.NewGuid();
         var (allies, profiles) = CreateAllies(tenantId, 1);
         var repo = new InMemorySolicitudAssignmentRepository();
-        await repo.RejectRequestAsync(requestId, tenantId, allies[0].UserId, allies[0].AllyId, "OTRO");
+        await repo.RejectRequestAsync(requestId, tenantId, allies[0].UserId, allies[0].AllyId, "SIN_DISPONIBILIDAD", null);
         var core = new InMemoryCoreAssignments(profiles, () => allies[0].UserId);
 
         var result = await new AcceptDispatchOfferUseCase(repo, profiles, core).ExecuteAsync(requestId.ToString(), tenantId, allies[0].UserId);
@@ -186,6 +186,6 @@ public class ConcurrentAcceptanceTests
             repo.HasRejectedAsync(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()));
 
         await Assert.ThrowsAsync<DispatchDatabaseUnavailableException>(() =>
-            repo.RejectRequestAsync(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "OTRO"));
+            repo.RejectRequestAsync(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "SIN_DISPONIBILIDAD", null));
     }
 }

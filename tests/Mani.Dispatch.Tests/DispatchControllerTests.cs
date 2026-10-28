@@ -402,7 +402,7 @@ public class DispatchControllerTests
 
         _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {allyToken}";
         var result = await _controller.RejectRequest(reqId.ToString(), new RejectRequestDto("sin_disponibilidad"));
-        var retry = await _controller.RejectRequest(reqId.ToString(), new RejectRequestDto("OTRO"));
+        var retry = await _controller.RejectRequest(reqId.ToString(), new RejectRequestDto("OTRO", "Tengo otro compromiso"));
 
         var okResult = Assert.IsType<OkObjectResult>(result);
         Assert.Equal(200, okResult.StatusCode);
@@ -440,7 +440,7 @@ public class DispatchControllerTests
 
         var reqId = Guid.NewGuid();
         profiles.RegisterSolicitud(new SolicitudContext { Id = reqId, TenantId = _testTenantId, Estado = "PENDIENTE" });
-        var result = await controller.RejectRequest(reqId.ToString(), new RejectRequestDto("OTRO"));
+        var result = await controller.RejectRequest(reqId.ToString(), new RejectRequestDto("FUERA_DE_ZONA"));
 
         var unavailableResult = Assert.IsType<ObjectResult>(result);
         Assert.Equal(503, unavailableResult.StatusCode);
@@ -813,7 +813,7 @@ public class DispatchControllerTests
         var reqId = RegisterOffer();
         var (_, token) = RegisterAllyToken();
         _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
-        await _controller.RejectRequest(reqId.ToString(), new RejectRequestDto(null));
+        await _controller.RejectRequest(reqId.ToString(), new RejectRequestDto("SIN_DISPONIBILIDAD"));
 
         var result = await _controller.AcceptRequest(reqId.ToString());
 
@@ -874,17 +874,100 @@ public class DispatchControllerTests
     }
 
     [Fact]
-    public async Task RejectRequest_WithoutReason_IsAccepted_AndStoresNull()
+    public async Task RejectRequest_WithoutBody_Returns422_AndStoresNothing()
+    {
+        // SCRUM-1617, C1/C3: el motivo es obligatorio y el servidor no inventa ninguno.
+        var reqId = RegisterOffer();
+        var (_, token) = RegisterAllyToken();
+        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
+
+        var result = await _controller.RejectRequest(reqId.ToString(), null);
+
+        Assert.Equal(422, Assert.IsType<UnprocessableEntityObjectResult>(result).StatusCode);
+        Assert.Equal("MANI-SOL-422M", Body(result).GetProperty("code").GetString());
+        Assert.Equal(0, _assignmentRepo.RejectionCount);
+    }
+
+    [Theory]
+    [InlineData(null, null, "MANI-SOL-422M")]
+    [InlineData("", null, "MANI-SOL-422M")]
+    [InlineData("   ", null, "MANI-SOL-422M")]
+    [InlineData("OTRO", null, "MANI-SOL-422D")]
+    [InlineData("OTRO", "   ", "MANI-SOL-422D")]
+    [InlineData("OTRO", "ok", "MANI-SOL-422D")]
+    [InlineData("SIN_DISPONIBILIDAD", "Estoy de viaje", "MANI-SOL-422D")]
+    public async Task RejectRequest_WithAnInvalidReasonOrDetail_Returns422_AndStoresNothing(string? motivo, string? detalle, string code)
+    {
+        var reqId = RegisterOffer();
+        var (_, token) = RegisterAllyToken();
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {token}";
+
+        var result = await _controller.RejectRequest(reqId.ToString(), new RejectRequestDto(motivo, detalle));
+
+        Assert.Equal(422, Assert.IsType<UnprocessableEntityObjectResult>(result).StatusCode);
+        Assert.Equal(code, Body(result).GetProperty("code").GetString());
+        Assert.Equal(0, _assignmentRepo.RejectionCount);
+    }
+
+    [Fact]
+    public async Task RejectRequest_WithOtroAndDetail_StoresTheTrimmedDetail_AndReturnsIt()
     {
         var reqId = RegisterOffer();
         var (allyId, token) = RegisterAllyToken();
         _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
 
-        var result = await _controller.RejectRequest(reqId.ToString(), null);
+        var result = await _controller.RejectRequest(reqId.ToString(), new RejectRequestDto("otro", "  Mi herramienta está en reparación  "));
 
         Assert.IsType<OkObjectResult>(result);
+        Assert.Equal("OTRO", _assignmentRepo.MotivoDe(reqId, allyId));
+        Assert.Equal("Mi herramienta está en reparación", _assignmentRepo.DetalleDe(reqId, allyId));
+        Assert.Equal("Mi herramienta está en reparación", Body(result).GetProperty("detalle").GetString());
+    }
+
+    [Fact]
+    public async Task RejectRequest_DetailOf280Characters_IsAccepted_281_IsRejected()
+    {
+        var (_, token) = RegisterAllyToken();
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {token}";
+
+        var limite = await _controller.RejectRequest(RegisterOffer().ToString(), new RejectRequestDto("OTRO", new string('a', 280)));
+        var excedido = await _controller.RejectRequest(RegisterOffer().ToString(), new RejectRequestDto("OTRO", new string('a', 281)));
+
+        Assert.IsType<OkObjectResult>(limite);
+        Assert.Equal("MANI-SOL-422D", Body(excedido).GetProperty("code").GetString());
         Assert.Equal(1, _assignmentRepo.RejectionCount);
-        Assert.Null(_assignmentRepo.MotivoDe(reqId, allyId));
+    }
+
+    [Fact]
+    public async Task RejectRequest_WithoutReason_WhenTheDatabaseIsDown_Returns422_Not503()
+    {
+        // C4: la validación va antes de cualquier acceso a Core o a la base. Mismo escenario que
+        // RejectRequest_WhenDatabaseFails_Returns503ServiceUnavailable (aliado verificado, solicitud PENDIENTE y
+        // base caída), que con un motivo válido responde 503; sin motivo debe ser 422.
+        var postgresRepo = new PostgresSolicitudAssignmentRepository(
+            new Mock<Microsoft.Extensions.Configuration.IConfiguration>().Object,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<PostgresSolicitudAssignmentRepository>.Instance);
+        var allyUserId = Guid.NewGuid();
+        var profiles = new FakeAllyProfiles();
+        profiles.RegisterAlly(new AllyProfile(Guid.NewGuid(), _testTenantId, allyUserId, "VERIFICADO"));
+        var reqId = Guid.NewGuid();
+        profiles.RegisterSolicitud(new SolicitudContext { Id = reqId, TenantId = _testTenantId, Estado = "PENDIENTE" });
+        var controller = new DispatchController(
+            _getEligibleUseCase,
+            _orchestrateUseCase,
+            new AcceptDispatchOfferUseCase(postgresRepo, profiles, new InMemoryCoreAssignments(profiles, () => allyUserId)),
+            new RejectDispatchOfferUseCase(postgresRepo, profiles))
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
+        };
+        var token = TestTokenHelper.CreateTestToken(_testTenantId, allyUserId.ToString(), "aliado");
+        controller.HttpContext.Request.Headers.Authorization = $"Bearer {token}";
+
+        var sinMotivo = await controller.RejectRequest(reqId.ToString(), new RejectRequestDto(null));
+        var otroSinDetalle = await controller.RejectRequest(reqId.ToString(), new RejectRequestDto("OTRO"));
+
+        Assert.Equal(422, Assert.IsType<UnprocessableEntityObjectResult>(sinMotivo).StatusCode);
+        Assert.Equal(422, Assert.IsType<UnprocessableEntityObjectResult>(otroSinDetalle).StatusCode);
     }
 
     [Theory]
@@ -899,7 +982,7 @@ public class DispatchControllerTests
         var (_, token) = RegisterAllyToken();
         _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
 
-        var result = await _controller.RejectRequest(reqId.ToString(), new RejectRequestDto("OTRO"));
+        var result = await _controller.RejectRequest(reqId.ToString(), new RejectRequestDto("NO_ES_MI_ESPECIALIDAD"));
 
         Assert.Equal(expected, Assert.IsAssignableFrom<ObjectResult>(result).StatusCode);
         Assert.Equal(code, Body(result).GetProperty("code").GetString());
@@ -912,7 +995,7 @@ public class DispatchControllerTests
         _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
         var requestId = SetupSolicitud();
         var rechazo = Guid.NewGuid();
-        await _assignmentRepo.RejectRequestAsync(requestId, _testTenantId, Guid.NewGuid(), rechazo, "OTRO");
+        await _assignmentRepo.RejectRequestAsync(requestId, _testTenantId, Guid.NewGuid(), rechazo, "SIN_DISPONIBILIDAD", null);
         _mockRepo.Setup(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>())).ReturnsAsync((new List<Ally>(), 0));
 
         var result = await _controller.GetEligibleAlliesForRequest(requestId.ToString(), 1, 10);
@@ -968,7 +1051,7 @@ public class DispatchControllerTests
         _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
         var requestId = SetupSolicitud();
         var rechazo = Guid.NewGuid();
-        await _assignmentRepo.RejectRequestAsync(requestId, _testTenantId, Guid.NewGuid(), rechazo, null);
+        await _assignmentRepo.RejectRequestAsync(requestId, _testTenantId, Guid.NewGuid(), rechazo, "FUERA_DE_ZONA", null);
         _mockPublisher.Setup(p => p.GetOffersByRequestAsync(requestId, _testTenantId)).ReturnsAsync(new List<DispatchOffer>());
         _mockRepo.Setup(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>())).ReturnsAsync((new List<Ally>(), 0));
 
