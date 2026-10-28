@@ -331,7 +331,7 @@ public class DispatchController : ControllerBase
 
         try
         {
-            var result = await _rejectDispatchOfferUseCase.ExecuteAsync(requestId, session.TenantId, session.UsuarioId, dto?.Motivo, dto?.Detalle);
+            var result = await _rejectDispatchOfferUseCase.ExecuteAsync(requestId, session.TenantId, session.UsuarioId, dto?.Motivo);
 
             return result.Status switch
             {
@@ -340,7 +340,6 @@ public class DispatchController : ControllerBase
                     message = "Rechazo de oferta registrado exitosamente.",
                     requestId,
                     motivo = result.Motivo,
-                    detalle = result.Detalle,
                     status = "REJECTED",
                     isRetry = result.Status == RejectionStatus.AlreadyRejected,
                     correlationId,
@@ -360,7 +359,7 @@ public class DispatchController : ControllerBase
         }
         catch (InvalidRejectionReasonException ex)
         {
-            return UnprocessableEntity(ErrorBody(StatusCodes.Status422UnprocessableEntity, ex.ErrorCode, ex.Message, correlationId));
+            return UnprocessableEntity(ErrorBody(StatusCodes.Status422UnprocessableEntity, InvalidRejectionReasonException.Code, ex.Message, correlationId));
         }
         catch (ArgumentException ex)
         {
@@ -468,5 +467,4 @@ public class DispatchController : ControllerBase
     }
 }
 
-/// <summary>Motivo del rechazo (obligatorio, del catálogo) y detalle en texto libre, solo para OTRO.</summary>
-public record RejectRequestDto(string? Motivo, string? Detalle = null);
+public record RejectRequestDto(string? Motivo);
