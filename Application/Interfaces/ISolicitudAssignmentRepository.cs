@@ -34,7 +34,7 @@ public enum RejectionStatus
     InvalidState     // La solicitud ya no está PENDIENTE (409 MANI-DSP-409E)
 }
 
-public record RejectionResult(RejectionStatus Status, string? Motivo, string? Code = null);
+public record RejectionResult(RejectionStatus Status, string? Motivo, string? Code = null, string? Detalle = null);
 
 /// <summary>
 /// Rechazos y consultas de asignación en la base de Dispatch (decisión 6A, SCRUM-1403). Dispatch ya no escribe
@@ -43,8 +43,11 @@ public record RejectionResult(RejectionStatus Status, string? Motivo, string? Co
 /// </summary>
 public interface ISolicitudAssignmentRepository
 {
-    /// <summary>Registra el rechazo del aliado. Devuelve false si ya existía (reintento idempotente).</summary>
-    Task<bool> RejectRequestAsync(Guid requestId, Guid tenantId, Guid usuarioId, Guid aliadoId, string? motivo);
+    /// <summary>
+    /// Registra el rechazo del aliado con su motivo (obligatorio) y, si el motivo es OTRO, su detalle.
+    /// Devuelve false si ya existía (reintento idempotente; se conserva el primer motivo).
+    /// </summary>
+    Task<bool> RejectRequestAsync(Guid requestId, Guid tenantId, Guid usuarioId, Guid aliadoId, string motivo, string? detalle);
 
     /// <summary>Indica si el aliado ya rechazó la solicitud (N-3: quien rechazó no puede aceptar después).</summary>
     Task<bool> HasRejectedAsync(Guid requestId, Guid tenantId, Guid usuarioId, Guid aliadoId);

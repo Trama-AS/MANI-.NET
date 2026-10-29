@@ -62,7 +62,7 @@ public class OffersControllerTests
         var rechazada = Guid.NewGuid();
         _core.Offers.Add(new AllyOffer { Id = abierta, Estado = "PENDIENTE" });
         _core.Offers.Add(new AllyOffer { Id = rechazada, Estado = "PENDIENTE" });
-        await _repo.RejectRequestAsync(rechazada, _tenantId, _usuarioId, _aliadoId, null);
+        await _repo.RejectRequestAsync(rechazada, _tenantId, _usuarioId, _aliadoId, "FUERA_DE_ZONA", null);
 
         var result = await Controller(AllyToken()).GetMyOffers("corr-1");
 
