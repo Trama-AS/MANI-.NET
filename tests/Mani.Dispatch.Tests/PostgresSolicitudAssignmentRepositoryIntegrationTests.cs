@@ -17,6 +17,8 @@ namespace ManiDispatch.Tests;
 [Collection("Postgres")]
 public class PostgresSolicitudAssignmentRepositoryIntegrationTests
 {
+    private static readonly string[] SoloFueraDeZona = { "FUERA_DE_ZONA" };
+
     private readonly PostgresFixture _db;
 
     public PostgresSolicitudAssignmentRepositoryIntegrationTests(PostgresFixture db) => _db = db;
@@ -42,7 +44,7 @@ public class PostgresSolicitudAssignmentRepositoryIntegrationTests
         await c.OpenAsync();
         var motivos = (await c.QueryAsync<string>(
             "SELECT motivo FROM solicitud_rechazo WHERE solicitud_id = @solicitud AND aliado_id = @aliado", new { solicitud, aliado })).ToList();
-        Assert.Equal(new[] { "FUERA_DE_ZONA" }, motivos);
+        Assert.Equal(SoloFueraDeZona, motivos);
         Assert.All(await seed.ContextosAsync(), ctx => Assert.Equal((usuario, "aliado"), (ctx.UserId!.Value, ctx.Role)));
     }
 

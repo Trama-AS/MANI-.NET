@@ -230,7 +230,9 @@ public class DispatchController : ControllerBase
     /// perdedor recibe 409 sin saber quién ganó.
     /// </summary>
     [HttpPost("requests/{requestId}/accept")]
-    public async Task<IActionResult> AcceptRequest(string requestId)
+    public async Task<IActionResult> AcceptRequest(
+        string requestId,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey = null)
     {
         var correlationId = GetOrCreateCorrelationId();
 
@@ -240,7 +242,6 @@ public class DispatchController : ControllerBase
             return denied;
         }
 
-        var idempotencyKey = Request.Headers["Idempotency-Key"].ToString();
         if (string.IsNullOrWhiteSpace(idempotencyKey))
         {
             idempotencyKey = null;
@@ -381,16 +382,19 @@ public class DispatchController : ControllerBase
 
     private readonly record struct DispatchSession(Guid TenantId, Guid UsuarioId, string Role);
 
+    private static readonly string[] RolesAliado = { "aliado" };
+    private static readonly string[] RolesDespachador = { "cliente", "admin_tenant" };
+
     /// <summary>Sesión de aliado con usuario UUID; si no, deja en <paramref name="denied"/> la respuesta 401/403.</summary>
     private DispatchSession AuthenticateAlly(string correlationId, string accion, out IActionResult? denied)
     {
-        return Authenticate(correlationId, accion, new[] { "aliado" }, "únicamente los aliados pueden", out denied);
+        return Authenticate(correlationId, accion, RolesAliado, "únicamente los aliados pueden", out denied);
     }
 
     /// <summary>Sesión de cliente o admin del tenant con usuario UUID, que son quienes despachan.</summary>
     private DispatchSession AuthenticateDispatcher(string correlationId, string accion, out IActionResult? denied)
     {
-        return Authenticate(correlationId, accion, new[] { "cliente", "admin_tenant" }, "solo el cliente o el administrador del tenant pueden", out denied);
+        return Authenticate(correlationId, accion, RolesDespachador, "solo el cliente o el administrador del tenant pueden", out denied);
     }
 
     private DispatchSession Authenticate(string correlationId, string accion, string[] roles, string quien, out IActionResult? denied)
