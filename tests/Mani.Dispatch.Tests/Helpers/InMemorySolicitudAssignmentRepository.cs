@@ -14,21 +14,23 @@ namespace ManiDispatch.Tests.Helpers;
 public class InMemorySolicitudAssignmentRepository : ISolicitudAssignmentRepository
 {
     private readonly ConcurrentDictionary<Guid, Guid> _assignments = new();
-    private readonly ConcurrentDictionary<(Guid SolicitudId, Guid AliadoId), string?> _rejections = new();
+    private readonly ConcurrentDictionary<(Guid SolicitudId, Guid AliadoId), (string Motivo, string? Detalle)> _rejections = new();
 
     public ConcurrentQueue<(Guid UsuarioId, string Role)> Contexts { get; } = new();
 
     /// <summary>Simula que Core asignó la solicitud al aliado.</summary>
     public void MarkAssigned(Guid requestId, Guid aliadoId) => _assignments[requestId] = aliadoId;
 
-    public string? MotivoDe(Guid requestId, Guid aliadoId) => _rejections.TryGetValue((requestId, aliadoId), out var m) ? m : null;
+    public string? MotivoDe(Guid requestId, Guid aliadoId) => _rejections.TryGetValue((requestId, aliadoId), out var m) ? m.Motivo : null;
+
+    public string? DetalleDe(Guid requestId, Guid aliadoId) => _rejections.TryGetValue((requestId, aliadoId), out var m) ? m.Detalle : null;
 
     public int RejectionCount => _rejections.Count;
 
-    public Task<bool> RejectRequestAsync(Guid requestId, Guid tenantId, Guid usuarioId, Guid aliadoId, string? motivo)
+    public Task<bool> RejectRequestAsync(Guid requestId, Guid tenantId, Guid usuarioId, Guid aliadoId, string motivo, string? detalle)
     {
         Contexts.Enqueue((usuarioId, "aliado"));
-        return Task.FromResult(_rejections.TryAdd((requestId, aliadoId), motivo));
+        return Task.FromResult(_rejections.TryAdd((requestId, aliadoId), (motivo, detalle)));
     }
 
     public Task<bool> HasRejectedAsync(Guid requestId, Guid tenantId, Guid usuarioId, Guid aliadoId)
