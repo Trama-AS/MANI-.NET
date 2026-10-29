@@ -82,7 +82,7 @@ public class DispatchControllerTests
     [Fact]
     public async Task MatchProfessionals_WithCrossTenantSpoofing_Returns403Forbidden()
     {
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
 
         var foreignTenantId = Guid.NewGuid();
         var request = new MatchRequestDto
@@ -101,7 +101,7 @@ public class DispatchControllerTests
     [Fact]
     public async Task MatchProfessionals_WithValidToken_Returns200WithMatchedAllies()
     {
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
 
         var zonaId = Guid.NewGuid();
         var categoriaId = Guid.NewGuid();
@@ -140,7 +140,7 @@ public class DispatchControllerTests
     [Fact]
     public async Task GetEligibleAlliesForRequest_ResolvesZonaAndCategoriaFromSolicitud_WhenParamsOmitted()
     {
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
 
         var requestId = Guid.NewGuid();
         var dbZonaId = Guid.NewGuid();
@@ -176,7 +176,7 @@ public class DispatchControllerTests
     [Fact]
     public async Task GetEligibleAlliesForRequest_FiltersByTipo_WhenTipoQueryParamIsSent()
     {
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
         var requestId = SetupSolicitud();
         _mockRepo.Setup(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()))
                  .ReturnsAsync((new List<Ally>(), 0));
@@ -197,7 +197,7 @@ public class DispatchControllerTests
     [Fact]
     public async Task GetEligibleAlliesForRequest_WithInvalidTipo_Returns400BadRequest()
     {
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
         var requestId = SetupSolicitud();
 
         var actionResult = await _controller.GetEligibleAlliesForRequest(
@@ -213,7 +213,7 @@ public class DispatchControllerTests
     [Fact]
     public async Task GetEligibleAlliesForRequest_WhenSolicitudNotFound_Returns404NotFound()
     {
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
 
         var requestId = Guid.NewGuid();
         _mockRepo.Setup(r => r.GetSolicitudContextAsync(requestId, _testTenantId))
@@ -242,7 +242,7 @@ public class DispatchControllerTests
     [Fact]
     public async Task OrchestrateDispatch_WithCrossTenantSpoofing_Returns403Forbidden()
     {
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
 
         var dto = new OrchestrateRequestDto(Guid.NewGuid().ToString())
         {
@@ -258,7 +258,7 @@ public class DispatchControllerTests
     [Fact]
     public async Task OrchestrateDispatch_WhenValid_Returns200OkWithDispatchedOffers()
     {
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
 
         var requestId = Guid.NewGuid();
         var zonaId = Guid.NewGuid();
@@ -298,7 +298,7 @@ public class DispatchControllerTests
     [Fact]
     public async Task OrchestrateDispatch_WhenSolicitudNotFound_Returns404NotFound()
     {
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
 
         var requestId = Guid.NewGuid();
         _mockRepo.Setup(r => r.GetSolicitudContextAsync(requestId, _testTenantId))
@@ -326,15 +326,15 @@ public class DispatchControllerTests
         var ally2Token = TestTokenHelper.CreateTestToken(_testTenantId, ally2UserId.ToString(), "aliado");
 
         // Act 1: Primer aliado acepta con su token
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {ally1Token}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {ally1Token}";
         var result1 = await _controller.AcceptRequest(reqId);
 
         // Act 2: Segundo aliado colisiona con token distinto
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {ally2Token}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {ally2Token}";
         var result2 = await _controller.AcceptRequest(reqId);
 
         // Act 3: Primer aliado reintenta (idempotente)
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {ally1Token}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {ally1Token}";
         var result3 = await _controller.AcceptRequest(reqId);
 
         // Assert
@@ -355,7 +355,7 @@ public class DispatchControllerTests
         var unknownAllyUserId = Guid.NewGuid();
         var token = TestTokenHelper.CreateTestToken(_testTenantId, unknownAllyUserId.ToString(), "aliado");
 
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {token}";
         var result = await _controller.AcceptRequest(reqId);
 
         var forbiddenResult = Assert.IsType<ObjectResult>(result);
@@ -386,7 +386,7 @@ public class DispatchControllerTests
         };
 
         var token = TestTokenHelper.CreateTestToken(_testTenantId, allyUserId.ToString(), "aliado");
-        controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
+        controller.HttpContext.Request.Headers.Authorization = $"Bearer {token}";
 
         var result = await controller.AcceptRequest(Guid.NewGuid().ToString());
 
@@ -400,7 +400,7 @@ public class DispatchControllerTests
         var reqId = RegisterOffer();
         var (allyId, allyToken) = RegisterAllyToken();
 
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {allyToken}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {allyToken}";
         var result = await _controller.RejectRequest(reqId.ToString(), new RejectRequestDto("sin_disponibilidad"));
         var retry = await _controller.RejectRequest(reqId.ToString(), new RejectRequestDto("OTRO"));
 
@@ -436,7 +436,7 @@ public class DispatchControllerTests
         };
 
         var token = TestTokenHelper.CreateTestToken(_testTenantId, allyUserId.ToString(), "aliado");
-        controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
+        controller.HttpContext.Request.Headers.Authorization = $"Bearer {token}";
 
         var reqId = Guid.NewGuid();
         profiles.RegisterSolicitud(new SolicitudContext { Id = reqId, TenantId = _testTenantId, Estado = "PENDIENTE" });
@@ -451,7 +451,7 @@ public class DispatchControllerTests
     {
         // Arrange
         var token = TestTokenHelper.CreateTestToken(_testTenantId, secret: "wrong-secret-that-does-not-match-at-least-32-chars!");
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {token}";
 
         var prevSecret = Environment.GetEnvironmentVariable("SUPABASE_JWT_SECRET");
         try
@@ -485,7 +485,7 @@ public class DispatchControllerTests
             _testTenantId, 
             secret: TestTokenHelper.DefaultTestSecret, 
             expires: DateTime.UtcNow.AddMinutes(-30));
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {expiredToken}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {expiredToken}";
 
         var prevSecret = Environment.GetEnvironmentVariable("SUPABASE_JWT_SECRET");
         try
@@ -516,7 +516,7 @@ public class DispatchControllerTests
     {
         // Arrange
         var token = TestTokenHelper.CreateTestToken(_testTenantId);
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {token}";
 
         var prevSecret = Environment.GetEnvironmentVariable("SUPABASE_JWT_SECRET");
         var prevEnv = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT");
@@ -572,7 +572,7 @@ public class DispatchControllerTests
     [Fact]
     public async Task GetEligibleAlliesForRequest_WithInvalidGuid_Returns400BadRequest()
     {
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
 
         var result = await _controller.GetEligibleAlliesForRequest(
             "not-a-valid-uuid", 1, 10);
@@ -597,7 +597,7 @@ public class DispatchControllerTests
     public async Task AcceptRequest_WithNonAliadoRole_Returns403Forbidden()
     {
         var clientToken = TestTokenHelper.CreateTestToken(_testTenantId, "client-1", "cliente");
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {clientToken}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {clientToken}";
 
         var result = await _controller.AcceptRequest(Guid.NewGuid().ToString());
         var forbiddenResult = Assert.IsType<ObjectResult>(result);
@@ -608,7 +608,7 @@ public class DispatchControllerTests
     public async Task RejectRequest_WithNonAliadoRole_Returns403Forbidden()
     {
         var clientToken = TestTokenHelper.CreateTestToken(_testTenantId, "client-1", "cliente");
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {clientToken}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {clientToken}";
 
         var result = await _controller.RejectRequest(Guid.NewGuid().ToString(), new RejectRequestDto("Motivo"));
         var forbiddenResult = Assert.IsType<ObjectResult>(result);
@@ -618,7 +618,7 @@ public class DispatchControllerTests
     [Fact]
     public async Task MatchProfessionals_WhenUseCaseThrowsArgumentException_Returns400BadRequest()
     {
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
 
         // Solicitud sin ZonaId ni CategoriaId dispara ArgumentException en ExecuteAsync
         var request = new MatchRequestDto
@@ -637,7 +637,7 @@ public class DispatchControllerTests
     {
         // Arrange
         var aliadoToken = TestTokenHelper.CreateTestToken(_testTenantId, "aliado-1", "aliado");
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {aliadoToken}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {aliadoToken}";
 
         var request = new OrchestrateRequestDto
         {
@@ -657,7 +657,7 @@ public class DispatchControllerTests
     {
         // Arrange
         var adminToken = TestTokenHelper.CreateTestToken(_testTenantId, Guid.NewGuid().ToString(), "admin_tenant");
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {adminToken}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {adminToken}";
 
         var requestId = Guid.NewGuid();
         _mockRepo.Setup(r => r.GetSolicitudContextAsync(requestId, _testTenantId))
@@ -679,7 +679,7 @@ public class DispatchControllerTests
     [Fact]
     public async Task MatchProfessionals_WhenCoreIsUnavailable_Returns503()
     {
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
         _mockRepo.Setup(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()))
                  .ThrowsAsync(new CoreServiceUnavailableException("Core no respondió."));
 
@@ -696,7 +696,7 @@ public class DispatchControllerTests
     [Fact]
     public async Task GetEligibleAlliesForRequest_WhenCoreIsUnavailableResolvingSolicitud_Returns503()
     {
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
         var requestId = Guid.NewGuid();
         _mockRepo.Setup(r => r.GetSolicitudContextAsync(requestId, _testTenantId))
                  .ThrowsAsync(new CoreServiceUnavailableException("Core no respondió."));
@@ -710,7 +710,7 @@ public class DispatchControllerTests
     [Fact]
     public async Task GetEligibleAlliesForRequest_WhenCoreIsUnavailableListingAllies_Returns503()
     {
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
         var requestId = SetupSolicitud();
         _mockRepo.Setup(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()))
                  .ThrowsAsync(new CoreServiceUnavailableException("Core no respondió."));
@@ -725,7 +725,7 @@ public class DispatchControllerTests
     public async Task OrchestrateDispatch_WhenCoreIsUnavailable_Returns503()
     {
         var adminToken = TestTokenHelper.CreateTestToken(_testTenantId, Guid.NewGuid().ToString(), "admin_tenant");
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {adminToken}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {adminToken}";
         var requestId = Guid.NewGuid();
         _mockRepo.Setup(r => r.GetSolicitudContextAsync(requestId, _testTenantId))
                  .ThrowsAsync(new CoreServiceUnavailableException("Core no respondió."));
@@ -778,9 +778,9 @@ public class DispatchControllerTests
         var (_, winnerToken) = RegisterAllyToken();
         var (_, loserToken) = RegisterAllyToken();
 
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {winnerToken}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {winnerToken}";
         await _controller.AcceptRequest(reqId);
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {loserToken}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {loserToken}";
         var result = await _controller.AcceptRequest(reqId);
 
         Assert.IsType<ConflictObjectResult>(result);
@@ -795,11 +795,11 @@ public class DispatchControllerTests
     {
         var reqId = Guid.NewGuid();
         var (allyId, token) = RegisterAllyToken();
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
-        _controller.HttpContext.Request.Headers["Idempotency-Key"] = "toque-1";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {token}";
 
-        var first = await _controller.AcceptRequest(reqId.ToString());
-        var retry = await _controller.AcceptRequest(reqId.ToString());
+        // Idempotency-Key llega por model binding ([FromHeader]); llamando la acción directamente se pasa como argumento.
+        var first = await _controller.AcceptRequest(reqId.ToString(), "toque-1");
+        var retry = await _controller.AcceptRequest(reqId.ToString(), "toque-1");
 
         Assert.Equal((reqId, "toque-1", "test-corr-id"), _coreAssignments.LastCommand);
         Assert.False(Body(first).GetProperty("isRetry").GetBoolean());
@@ -812,7 +812,7 @@ public class DispatchControllerTests
     {
         var reqId = RegisterOffer();
         var (_, token) = RegisterAllyToken();
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {token}";
         await _controller.RejectRequest(reqId.ToString(), new RejectRequestDto(null));
 
         var result = await _controller.AcceptRequest(reqId.ToString());
@@ -845,7 +845,7 @@ public class DispatchControllerTests
     public async Task AcceptRequest_WhenCoreFailsOrDeniesTheSession_Returns503Or403()
     {
         var (_, token) = RegisterAllyToken();
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {token}";
 
         _coreAssignments.Failure = new CoreServiceUnavailableException("Core no respondió.");
         var unavailable = await _controller.AcceptRequest(Guid.NewGuid().ToString());
@@ -863,7 +863,7 @@ public class DispatchControllerTests
     {
         var reqId = RegisterOffer();
         var (_, token) = RegisterAllyToken();
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {token}";
 
         var result = await _controller.RejectRequest(reqId.ToString(), new RejectRequestDto("NO_DISPONIBLE"));
 
@@ -878,7 +878,7 @@ public class DispatchControllerTests
     {
         var reqId = RegisterOffer();
         var (allyId, token) = RegisterAllyToken();
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {token}";
 
         var result = await _controller.RejectRequest(reqId.ToString(), null);
 
@@ -897,7 +897,7 @@ public class DispatchControllerTests
     {
         var reqId = unknown ? Guid.NewGuid() : RegisterOffer(estado, esMia);
         var (_, token) = RegisterAllyToken();
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {token}";
 
         var result = await _controller.RejectRequest(reqId.ToString(), new RejectRequestDto("OTRO"));
 
@@ -909,7 +909,7 @@ public class DispatchControllerTests
     [Fact]
     public async Task GetEligibleAlliesForRequest_ExcludesTheAlliesThatRejected_ReadingWithTheClientContext()
     {
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
         var requestId = SetupSolicitud();
         var rechazo = Guid.NewGuid();
         await _assignmentRepo.RejectRequestAsync(requestId, _testTenantId, Guid.NewGuid(), rechazo, "OTRO");
@@ -927,7 +927,7 @@ public class DispatchControllerTests
     public async Task GetEligibleAlliesForRequest_ForAnAlly_Returns403_WithoutAskingCore()
     {
         var (_, token) = RegisterAllyToken();
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {token}";
 
         var result = await _controller.GetEligibleAlliesForRequest(Guid.NewGuid().ToString(), 1, 10);
 
@@ -939,7 +939,7 @@ public class DispatchControllerTests
     [Fact]
     public async Task GetEligibleAlliesForRequest_WhenCoreDeniesTheSession_Returns403Not503()
     {
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
         var requestId = Guid.NewGuid();
         _mockRepo.Setup(r => r.GetSolicitudContextAsync(requestId, _testTenantId))
                  .ThrowsAsync(new CoreAccessDeniedException("Core negó el acceso."));
@@ -952,7 +952,7 @@ public class DispatchControllerTests
     [Fact]
     public async Task OrchestrateDispatch_WhenTheRequestIsNotPending_Returns409E_AndPublishesNothing()
     {
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
         var requestId = SetupSolicitud("ASIGNADA");
 
         var result = await _controller.OrchestrateDispatch(new OrchestrateRequestDto(requestId.ToString()));
@@ -965,7 +965,7 @@ public class DispatchControllerTests
     [Fact]
     public async Task OrchestrateDispatch_DoesNotOfferAgainToTheAlliesThatRejected()
     {
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
         var requestId = SetupSolicitud();
         var rechazo = Guid.NewGuid();
         await _assignmentRepo.RejectRequestAsync(requestId, _testTenantId, Guid.NewGuid(), rechazo, null);
@@ -982,7 +982,7 @@ public class DispatchControllerTests
     [Fact]
     public async Task OrchestrateDispatch_WhenTheDatabaseFails_Returns503NotConflict()
     {
-        _controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
         var requestId = SetupSolicitud();
         _mockPublisher.Setup(p => p.GetOffersByRequestAsync(requestId, _testTenantId)).ReturnsAsync(new List<DispatchOffer>());
         var postgresRepo = new PostgresSolicitudAssignmentRepository(
@@ -996,7 +996,7 @@ public class DispatchControllerTests
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
         };
-        controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {_validJwtToken}";
+        controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
 
         var result = await controller.OrchestrateDispatch(new OrchestrateRequestDto(requestId.ToString()));
 
@@ -1010,7 +1010,7 @@ public class DispatchControllerTests
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
         };
-        controller.HttpContext.Request.Headers["Authorization"] = $"Bearer {token}";
+        controller.HttpContext.Request.Headers.Authorization = $"Bearer {token}";
         controller.HttpContext.Request.Headers["X-Correlation-ID"] = "test-corr-id";
         return controller;
     }
