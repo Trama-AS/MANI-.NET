@@ -1,6 +1,5 @@
 using System;
 using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using Microsoft.IdentityModel.Tokens;
@@ -98,60 +97,29 @@ public static class JwtAuthHelper
                 return new AuthResult(false, null, null, null, "Error de autenticación: algoritmo de firma no permitido.");
             }
 
-            var principal = TokenHandler.ValidateToken(token, validationParameters, out var validatedToken);
+            TokenHandler.ValidateToken(token, validationParameters, out var validatedToken);
             var jwtToken = (JwtSecurityToken)validatedToken;
 
-            string? userId = jwtToken.Subject ?? principal.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            string? tenantIdStr = null;
-            string? role = null;
-
-            // En Supabase Auth, los claims de negocio están estrictamente en app_metadata (ADR-0018).
-            // La raíz contiene role: "authenticated", el cual DEBE ignorarse.
-            var appMetadataClaim = jwtToken.Claims.FirstOrDefault(c => c.Type == "app_metadata");
-            if (appMetadataClaim != null && !string.IsNullOrWhiteSpace(appMetadataClaim.Value))
-            {
-                try
-                {
-                    using var doc = JsonDocument.Parse(appMetadataClaim.Value);
-                    var root = doc.RootElement;
-                    if (root.TryGetProperty("tenant_id", out var tenantProp))
-                    {
-                        tenantIdStr = tenantProp.GetString();
-                    }
-                    if (root.TryGetProperty("user_role", out var userRoleProp))
-                    {
-                        role = userRoleProp.GetString();
-                    }
-                    else if (root.TryGetProperty("role", out var roleProp))
-                    {
-                        role = roleProp.GetString();
-                    }
-                }
-                catch
-                {
-                    // Ignora fallo de deserialización de json en claim
-                }
-            }
-
-            // Fallback para claims planos emitidos por otros middlewares
-            if (string.IsNullOrWhiteSpace(tenantIdStr))
-            {
-                tenantIdStr = jwtToken.Claims.FirstOrDefault(c => c.Type == "tenant_id" || c.Type == "tenantId")?.Value;
-            }
-
-            if (string.IsNullOrWhiteSpace(role))
-            {
-                role = jwtToken.Claims.FirstOrDefault(c => c.Type == "user_role")?.Value;
-            }
+            // Misma regla de claims que validate-token de Core (ADR-0031 §2, SCRUM-1333, TEC-07):
+            // tenant y rol salen EXCLUSIVAMENTE de app_metadata (objeto JSON) y sub es obligatorio.
+            // Sin respaldo a la raíz del token: en Supabase la raíz trae role = "authenticated", y un
+            // tenant_id o user_role en la raíz no los emite el Custom Access Token Hook.
+            var userId = jwtToken.Subject;
+            var (tenantIdStr, role) = ReadAppMetadata(jwtToken);
 
             if (string.IsNullOrWhiteSpace(tenantIdStr))
             {
-                return new AuthResult(false, null, userId, role, "El token no contiene el claim obligatorio tenant_id.");
+                return new AuthResult(false, null, null, null, "El token no contiene el claim obligatorio app_metadata.tenant_id.");
+            }
+
+            if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(role))
+            {
+                return new AuthResult(false, null, null, null, "El token no contiene los claims obligatorios sub y app_metadata.user_role.");
             }
 
             if (!Guid.TryParse(tenantIdStr, out var tenantGuid))
             {
-                return new AuthResult(false, null, userId, role, $"El tenant_id '{tenantIdStr}' no es un UUID válido.");
+                return new AuthResult(false, null, null, null, $"El tenant_id '{tenantIdStr}' no es un UUID válido.");
             }
 
             return new AuthResult(true, tenantGuid, userId, role, null);
@@ -170,4 +138,35 @@ public static class JwtAuthHelper
             return new AuthResult(false, null, null, null, "Error de autenticación: el token es inválido o tiene un formato incorrecto.");
         }
     }
+
+    /// <summary>
+    /// Lee tenant_id y user_role de app_metadata. Solo se acepta app_metadata como objeto JSON y cada
+    /// valor como cadena; cualquier otra forma (texto con JSON dentro, número, objeto) cuenta como ausente.
+    /// </summary>
+    private static (string? TenantId, string? Role) ReadAppMetadata(JwtSecurityToken jwtToken)
+    {
+        var claim = jwtToken.Claims.FirstOrDefault(c => c.Type == "app_metadata");
+        if (claim is null || claim.ValueType != JsonClaimValueTypes.Json)
+        {
+            return (null, null);
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(claim.Value);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return (null, null);
+            }
+
+            return (StringProperty(doc.RootElement, "tenant_id"), StringProperty(doc.RootElement, "user_role"));
+        }
+        catch (JsonException)
+        {
+            return (null, null);
+        }
+    }
+
+    private static string? StringProperty(JsonElement obj, string name) =>
+        obj.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 }

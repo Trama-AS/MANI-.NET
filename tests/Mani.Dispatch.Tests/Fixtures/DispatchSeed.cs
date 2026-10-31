@@ -96,6 +96,26 @@ public sealed class DispatchSeed
             new { TenantId, aliadoId, inicio, fin });
     }
 
+    /// <summary>Deja la solicitud asignada al aliado, como la registra Core con el comando de la decisión 6A.</summary>
+    public async Task AssignAsync(Guid solicitudId, Guid aliadoId, string estado = "ASIGNADA")
+    {
+        await using var c = Open();
+        await c.OpenAsync();
+        await c.ExecuteAsync(
+            "UPDATE solicitud SET aliado_id = @aliadoId, estado = @estado WHERE id = @solicitudId AND tenant_id = @TenantId",
+            new { aliadoId, estado, solicitudId, TenantId });
+    }
+
+    /// <summary>Contextos que fijó Dispatch con app.set_context para este tenant, en orden.</summary>
+    public async Task<List<(Guid? UserId, string Role)>> ContextosAsync()
+    {
+        await using var c = Open();
+        await c.OpenAsync();
+        var rows = await c.QueryAsync<(Guid? UserId, string Role)>(
+            "SELECT user_id, user_role FROM app.contexto_registrado WHERE tenant_id = @TenantId ORDER BY txid", new { TenantId });
+        return rows.ToList();
+    }
+
     public async Task<Guid> AddSolicitudAsync(string estado = "PENDIENTE")
     {
         await using var c = Open();

@@ -32,12 +32,16 @@ builder.Services.AddHttpClient<IAllyRepository, CoreAllyClient>(client => client
     .AddHttpMessageHandler<ForwardAuthorizationHandler>();
 builder.Services.AddHttpClient<IDispatchPublisher, CoreDispatchPublisher>(client => client.Timeout = TimeSpan.FromSeconds(3))
     .AddHttpMessageHandler<ForwardAuthorizationHandler>();
+// Decisión 6A (SCRUM-1403): Core registra la asignación; Dispatch le envía el comando con el JWT del aliado.
+builder.Services.AddHttpClient<ICoreAssignmentClient, CoreAssignmentClient>(client => client.Timeout = TimeSpan.FromSeconds(3))
+    .AddHttpMessageHandler<ForwardAuthorizationHandler>();
 builder.Services.AddScoped<ISolicitudAssignmentRepository, PostgresSolicitudAssignmentRepository>();
 builder.Services.AddScoped<GetEligibleAlliesUseCase>();
 builder.Services.AddScoped<OrchestrateDispatchUseCase>();
 builder.Services.AddScoped<AcceptDispatchOfferUseCase>();
 builder.Services.AddScoped<RejectDispatchOfferUseCase>();
 builder.Services.AddScoped<GetAllyAssignmentsUseCase>();
+builder.Services.AddScoped<GetAllyOffersUseCase>();
 
 var app = builder.Build();
 
