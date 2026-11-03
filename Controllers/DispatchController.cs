@@ -159,6 +159,10 @@ public class DispatchController : ControllerBase
         {
             return CoreUnavailable(correlationId);
         }
+        catch (RulesServiceUnavailableException)
+        {
+            return RulesUnavailable(correlationId);
+        }
         catch (DispatchDatabaseUnavailableException)
         {
             return DatabaseUnavailable("No es posible consultar los rechazos de la solicitud por indisponibilidad de la base de datos (ADR-0016).", correlationId);
@@ -447,6 +451,18 @@ public class DispatchController : ControllerBase
     {
         return StatusCode(StatusCodes.Status503ServiceUnavailable,
             ErrorBody(StatusCodes.Status503ServiceUnavailable, "DATABASE_UNAVAILABLE", error, correlationId));
+    }
+
+    private ObjectResult RulesUnavailable(string correlationId)
+    {
+        return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+        {
+            error = "No fue posible ordenar los aliados según las reglas del tenant; intenta de nuevo.",
+            code = "RULES_SERVICE_UNAVAILABLE",
+            status = StatusCodes.Status503ServiceUnavailable,
+            correlationId,
+            timestamp = DateTime.UtcNow.ToString("o")
+        });
     }
 
     private ObjectResult CoreUnavailable(string correlationId)

@@ -174,6 +174,21 @@ public class DispatchControllerTests
     }
 
     [Fact]
+    public async Task GetEligibleAlliesForRequest_WhenRulesCannotOrder_Returns503WithoutTheList()
+    {
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
+        var requestId = SetupSolicitud();
+        _mockRepo.Setup(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()))
+                 .ReturnsAsync((new List<Ally> { new() { Id = Guid.NewGuid() } }, 1));
+
+        var actionResult = await _controller.GetEligibleAlliesForRequest(requestId.ToString(), page: 1, pageSize: 10);
+
+        var result = Assert.IsType<ObjectResult>(actionResult);
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, result.StatusCode);
+        Assert.Contains("RULES_SERVICE_UNAVAILABLE", System.Text.Json.JsonSerializer.Serialize(result.Value));
+    }
+
+    [Fact]
     public async Task GetEligibleAlliesForRequest_FiltersByTipo_WhenTipoQueryParamIsSent()
     {
         _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";

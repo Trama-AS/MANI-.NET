@@ -2,6 +2,7 @@ using System.Text.Json;
 using ManiDispatch.Application.Interfaces;
 using ManiDispatch.Application.UseCases;
 using ManiDispatch.Infrastructure.Core;
+using ManiDispatch.Infrastructure.Rules;
 using ManiDispatch.Infrastructure.Dispatch;
 using ManiDispatch.Infrastructure.Repositories;
 
@@ -35,6 +36,10 @@ builder.Services.AddHttpClient<IDispatchPublisher, CoreDispatchPublisher>(client
 // Decisión 6A (SCRUM-1403): Core registra la asignación; Dispatch le envía el comando con el JWT del aliado.
 builder.Services.AddHttpClient<ICoreAssignmentClient, CoreAssignmentClient>(client => client.Timeout = TimeSpan.FromSeconds(3))
     .AddHttpMessageHandler<ForwardAuthorizationHandler>();
+// Orden de los elegibles (SCRUM-1462): criterio del tenant en Core y evaluación en Rules, sin orden local si fallan.
+builder.Services.AddHttpClient<ITenantRulesReader, CoreTenantRulesClient>(client => client.Timeout = TimeSpan.FromSeconds(3))
+    .AddHttpMessageHandler<ForwardAuthorizationHandler>();
+builder.Services.AddHttpClient<IRulesClient, RulesClient>(client => client.Timeout = TimeSpan.FromSeconds(3));
 builder.Services.AddScoped<ISolicitudAssignmentRepository, PostgresSolicitudAssignmentRepository>();
 builder.Services.AddScoped<GetEligibleAlliesUseCase>();
 builder.Services.AddScoped<OrchestrateDispatchUseCase>();
