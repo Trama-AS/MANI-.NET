@@ -297,6 +297,9 @@ public class OrchestrateDispatchUseCaseTests
         _mockPublisher.Setup(p => p.GetOffersByRequestAsync(requestId, tenantId))
                       .ReturnsAsync(existingOffers);
 
+        _mockRepo.Setup(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()))
+                 .ReturnsAsync((new List<Ally> { new() { Id = allyId, NombreRazonSocial = "Aliado Existente" } }, 1));
+
         var request = new OrchestrateRequestDto
         {
             RequestId = requestId.ToString()
@@ -314,5 +317,48 @@ public class OrchestrateDispatchUseCaseTests
         Assert.Contains("idempotente", result.Message, StringComparison.OrdinalIgnoreCase);
 
         _mockPublisher.Verify(p => p.PublishOfferAsync(It.IsAny<DispatchOffer>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_OnRetry_DoesNotOfferAgainToAnAllyWhoRejected()
+    {
+        var tenantId = Guid.NewGuid();
+        var requestId = Guid.NewGuid();
+        var usuarioId = Guid.NewGuid();
+        var rejectedId = Guid.NewGuid();
+        var offeredId = Guid.NewGuid();
+        var missingId = Guid.NewGuid();
+        var assignments = new Mock<ISolicitudAssignmentRepository>();
+        var useCase = new OrchestrateDispatchUseCase(_mockRepo.Object, _mockPublisher.Object, assignments.Object);
+
+        _mockRepo.Setup(r => r.GetSolicitudContextAsync(requestId, tenantId))
+                 .ReturnsAsync(new SolicitudContext
+                 {
+                     Id = requestId,
+                     TenantId = tenantId,
+                     ZonaId = Guid.NewGuid(),
+                     CategoriaId = Guid.NewGuid(),
+                     Estado = "PENDIENTE"
+                 });
+        _mockPublisher.Setup(p => p.GetOffersByRequestAsync(requestId, tenantId))
+                      .ReturnsAsync(new List<DispatchOffer>
+                      {
+                          new(requestId, tenantId, offeredId, "Ya ofertado", "ENVIADA", "corr-prev", DateTime.UtcNow.AddMinutes(-5))
+                      });
+        assignments.Setup(a => a.GetRejectedAllyIdsAsync(requestId, tenantId, usuarioId, "cliente"))
+                   .ReturnsAsync(new[] { rejectedId });
+        _mockRepo.Setup(r => r.GetEligibleAlliesAsync(It.Is<MatchCriteria>(c => c.ExcludeAllyIds.Contains(rejectedId))))
+                 .ReturnsAsync((new List<Ally>
+                 {
+                     new() { Id = offeredId, NombreRazonSocial = "Ya ofertado" },
+                     new() { Id = missingId, NombreRazonSocial = "Faltante" }
+                 }, 2));
+
+        var result = await useCase.ExecuteAsync(
+            new OrchestrateRequestDto { RequestId = requestId.ToString() }, "corr-retry", tenantId, usuarioId, "cliente");
+
+        Assert.Equal(2, result.CandidatesCount);
+        _mockPublisher.Verify(p => p.PublishOfferAsync(It.Is<DispatchOffer>(o => o.AllyId == missingId)), Times.Once);
+        _mockPublisher.Verify(p => p.PublishOfferAsync(It.IsAny<DispatchOffer>()), Times.Once);
     }
 }

@@ -71,32 +71,9 @@ public class OrchestrateDispatchUseCase
         resolvedZonaGuid = solicitud.ZonaId;
         resolvedCategoriaGuid = solicitud.CategoriaId;
 
-        // Idempotencia (RNF-03): verificar si ya existen ofertas previas para este requestId y tenantId
-        var existingOffers = await _dispatchPublisher.GetOffersByRequestAsync(requestGuid, tenantId);
-        if (existingOffers != null && existingOffers.Count > 0)
-        {
-            var existingDtoList = existingOffers.Select(o => new OrchestratedOfferDto
-            {
-                AllyId = o.AllyId.ToString(),
-                NombreRazonSocial = o.AllyNombre,
-                EstadoOferta = o.Estado,
-                FechaOferta = o.Timestamp
-            }).ToList();
-
-            return new OrchestrateResponseDto
-            {
-                Message = $"Despacho ya transmitido previamente. Reintento idempotente con {existingDtoList.Count} ofertas (RNF-03).",
-                RequestId = request.RequestId,
-                TenantId = tenantId.ToString(),
-                ZonaId = resolvedZonaGuid.ToString(),
-                CategoriaId = resolvedCategoriaGuid.ToString(),
-                Status = "DISPATCHED",
-                CorrelationId = correlationId,
-                CandidatesCount = existingDtoList.Count,
-                CandidatesNotified = existingDtoList,
-                Timestamp = existingOffers.First().Timestamp
-            };
-        }
+        // Idempotencia (RNF-03): las ofertas ya publicadas no se repiten; un reintento completa solo las que faltan.
+        var existingOffers = await _dispatchPublisher.GetOffersByRequestAsync(requestGuid, tenantId)
+            ?? Array.Empty<DispatchOffer>();
 
         // Los aliados que ya rechazaron no reciben otra vez la oferta (SCRUM-1404): Dispatch se los pasa a Core.
         IReadOnlyCollection<Guid> excludeAllyIds = Array.Empty<Guid>();
@@ -116,10 +93,18 @@ public class OrchestrateDispatchUseCase
             ExcludeAllyIds = excludeAllyIds
         });
 
-        var notifiedOffers = new List<OrchestratedOfferDto>();
+        var alreadyOffered = existingOffers.Select(o => o.AllyId).ToHashSet();
+        var notifiedOffers = existingOffers.Select(o => new OrchestratedOfferDto
+        {
+            AllyId = o.AllyId.ToString(),
+            NombreRazonSocial = o.AllyNombre,
+            EstadoOferta = o.Estado,
+            FechaOferta = o.Timestamp
+        }).ToList();
         var now = DateTime.UtcNow;
+        int published = 0;
 
-        foreach (var ally in alliesList)
+        foreach (var ally in alliesList.Where(a => !alreadyOffered.Contains(a.Id)))
         {
             var offer = new DispatchOffer(
                 RequestId: requestGuid,
@@ -132,6 +117,7 @@ public class OrchestrateDispatchUseCase
             );
 
             await _dispatchPublisher.PublishOfferAsync(offer);
+            published++;
 
             notifiedOffers.Add(new OrchestratedOfferDto
             {
@@ -144,13 +130,9 @@ public class OrchestrateDispatchUseCase
 
         bool hasCandidates = notifiedOffers.Count > 0;
         string status = hasCandidates ? "DISPATCHED" : "NO_ELIGIBLE_ALLIES";
-        string message = hasCandidates
-            ? $"Despacho orquestado con éxito. Oferta transmitida a {notifiedOffers.Count} aliados elegibles (ADR-0016)."
-            : "Despacho procesado: no se encontraron aliados con cobertura activa para la zona y categoría especificadas.";
-
         return new OrchestrateResponseDto
         {
-            Message = message,
+            Message = BuildMessage(notifiedOffers.Count, existingOffers.Count, published),
             RequestId = request.RequestId,
             TenantId = tenantId.ToString(),
             ZonaId = resolvedZonaGuid.ToString(),
@@ -159,8 +141,23 @@ public class OrchestrateDispatchUseCase
             CorrelationId = correlationId,
             CandidatesCount = notifiedOffers.Count,
             CandidatesNotified = notifiedOffers,
-            Timestamp = now
+            Timestamp = published == 0 && existingOffers.Count > 0 ? existingOffers[0].Timestamp : now
         };
+    }
+
+    private static string BuildMessage(int total, int previous, int published)
+    {
+        if (total == 0)
+        {
+            return "Despacho procesado: no se encontraron aliados con cobertura activa para la zona y categoría especificadas.";
+        }
+        if (previous == 0)
+        {
+            return $"Despacho orquestado con éxito. Oferta transmitida a {total} aliados elegibles (ADR-0016).";
+        }
+        return published == 0
+            ? $"Despacho ya transmitido previamente. Reintento idempotente con {total} ofertas (RNF-03)."
+            : $"Reintento idempotente: se completaron {published} ofertas faltantes, {total} en total (RNF-03).";
     }
 
     /// <summary>
