@@ -10,9 +10,6 @@ namespace ManiDispatch.Application.UseCases;
 
 public class OrchestrateDispatchUseCase
 {
-    // Tamaño de página con el que se piden los elegibles a Core (su máximo es 100).
-    private const int BroadcastPageSize = 50;
-
     private readonly IAllyRepository _allyRepository;
     private readonly IDispatchPublisher _dispatchPublisher;
     private readonly ISolicitudAssignmentRepository? _assignmentRepository;
@@ -82,13 +79,12 @@ public class OrchestrateDispatchUseCase
             excludeAllyIds = await _assignmentRepository.GetRejectedAllyIdsAsync(requestGuid, tenantId, usuarioId.Value, role);
         }
 
-        var alliesList = await GetAllEligibleAlliesAsync(new MatchCriteria
+        var alliesList = await EligibleAlliesPaging.GetAllAsync(_allyRepository, new MatchCriteria
         {
             TenantId = tenantId,
             RequestId = requestGuid,
             ZonaId = resolvedZonaGuid,
             CategoriaId = resolvedCategoriaGuid,
-            PageSize = BroadcastPageSize,
             CorrelationId = correlationId,
             ExcludeAllyIds = excludeAllyIds
         });
@@ -158,39 +154,5 @@ public class OrchestrateDispatchUseCase
         return published == 0
             ? $"Despacho ya transmitido previamente. Reintento idempotente con {total} ofertas (RNF-03)."
             : $"Reintento idempotente: se completaron {published} ofertas faltantes, {total} en total (RNF-03).";
-    }
-
-    /// <summary>
-    /// El broadcast llega a todos los elegibles (SCRUM-1402 C1): Core pagina, así que se recorren todas las páginas.
-    /// Core ordena por id; un aliado repetido entre páginas se cuenta una sola vez, y una página sin aliados nuevos
-    /// termina el recorrido.
-    /// </summary>
-    private async Task<List<Ally>> GetAllEligibleAlliesAsync(MatchCriteria criteria)
-    {
-        var alliesList = new List<Ally>();
-        var vistos = new HashSet<Guid>();
-        int page = 1;
-        bool hayMas = true;
-        while (hayMas)
-        {
-            var (allies, totalCount) = await _allyRepository.GetEligibleAlliesAsync(new MatchCriteria
-            {
-                TenantId = criteria.TenantId,
-                RequestId = criteria.RequestId,
-                ZonaId = criteria.ZonaId,
-                CategoriaId = criteria.CategoriaId,
-                Tipo = criteria.Tipo,
-                Page = page++,
-                PageSize = criteria.PageSize,
-                CorrelationId = criteria.CorrelationId,
-                ExcludeAllyIds = criteria.ExcludeAllyIds
-            });
-            var pagina = allies.ToList();
-            var nuevos = pagina.Where(a => vistos.Add(a.Id)).ToList();
-            alliesList.AddRange(nuevos);
-            hayMas = nuevos.Count > 0 && pagina.Count >= criteria.PageSize && alliesList.Count < totalCount;
-        }
-
-        return alliesList;
     }
 }
