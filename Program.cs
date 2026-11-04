@@ -1,6 +1,7 @@
 using System.Text.Json;
 using ManiDispatch.Application.Interfaces;
 using ManiDispatch.Application.UseCases;
+using ManiDispatch.Infrastructure.Auth;
 using ManiDispatch.Infrastructure.Core;
 using ManiDispatch.Infrastructure.Rules;
 using ManiDispatch.Infrastructure.Dispatch;
@@ -40,6 +41,9 @@ builder.Services.AddHttpClient<ICoreAssignmentClient, CoreAssignmentClient>(clie
 builder.Services.AddHttpClient<ITenantRulesReader, CoreTenantRulesClient>(client => client.Timeout = TimeSpan.FromSeconds(3))
     .AddHttpMessageHandler<ForwardAuthorizationHandler>();
 builder.Services.AddHttpClient<IRulesClient, RulesClient>(client => client.Timeout = TimeSpan.FromSeconds(3));
+// Contexto efectivo del administrador de plataforma (SCRUM-901): lo resuelve Core.
+builder.Services.AddHttpClient<ICoreContextoClient, CoreContextoClient>(client => client.Timeout = TimeSpan.FromSeconds(3))
+    .AddHttpMessageHandler<ForwardAuthorizationHandler>();
 builder.Services.AddScoped<ISolicitudAssignmentRepository, PostgresSolicitudAssignmentRepository>();
 builder.Services.AddScoped<GetEligibleAlliesUseCase>();
 builder.Services.AddScoped<OrchestrateDispatchUseCase>();
@@ -62,6 +66,9 @@ app.Use(async (context, next) =>
     context.Response.Headers["X-Correlation-ID"] = correlationId;
     await next();
 });
+
+// SCRUM-901: sesión efectiva (tenant elegido / actuar como) antes de los controladores.
+app.UseMiddleware<ContextoPlataformaMiddleware>();
 
 app.MapControllers();
 

@@ -32,7 +32,7 @@ public class OffersController : ControllerBase
             correlationId = $"disp-{Guid.NewGuid():N}";
         }
 
-        var authResult = JwtAuthHelper.Authenticate(Request.Headers.Authorization);
+        var authResult = AuthEfectiva.Obtener(HttpContext);
         if (!authResult.IsAuthenticated)
         {
             return Unauthorized(new { error = authResult.ErrorMessage, code = "MANI-DSP-401", status = StatusCodes.Status401Unauthorized, correlationId });

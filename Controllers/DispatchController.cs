@@ -59,7 +59,7 @@ public class DispatchController : ControllerBase
     {
         var correlationId = GetOrCreateCorrelationId();
 
-        var authResult = JwtAuthHelper.Authenticate(Request.Headers.Authorization);
+        var authResult = AuthEfectiva.Obtener(HttpContext);
         if (!authResult.IsAuthenticated)
         {
             return Unauthorized(new
@@ -405,7 +405,7 @@ public class DispatchController : ControllerBase
     private DispatchSession Authenticate(string correlationId, string accion, string[] roles, string quien, out IActionResult? denied)
     {
         denied = null;
-        var authResult = JwtAuthHelper.Authenticate(Request.Headers.Authorization);
+        var authResult = AuthEfectiva.Obtener(HttpContext);
         if (!authResult.IsAuthenticated)
         {
             denied = Unauthorized(ErrorBody(StatusCodes.Status401Unauthorized, "MANI-DSP-401", authResult.ErrorMessage ?? "Token inválido.", correlationId));
