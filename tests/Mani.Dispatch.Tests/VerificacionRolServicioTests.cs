@@ -89,19 +89,28 @@ public class VerificacionRolServicioTests
     [Fact]
     public async Task EnDevelopment_UnRolQueSaltaRls_SoloAvisa()
     {
-        await Verificacion(_db.ConnectionString, Environments.Development).StartAsync(CancellationToken.None);
+        var error = await Record.ExceptionAsync(
+            () => Verificacion(_db.ConnectionString, Environments.Development).StartAsync(CancellationToken.None));
+
+        Assert.Null(error);
     }
 
     [Fact]
     public async Task FueraDeDevelopment_ConElRolDeServicio_Arranca()
     {
-        await Verificacion(await ComoRolDeServicioAsync(), "Production").StartAsync(CancellationToken.None);
+        var verificacion = Verificacion(await ComoRolDeServicioAsync(), "Production");
+
+        var error = await Record.ExceptionAsync(() => verificacion.StartAsync(CancellationToken.None));
+
+        Assert.Null(error);
     }
 
     [Fact]
     public async Task SinCadenaDeConexion_NoHayRolQueVerificar()
     {
-        await Verificacion(null, "Production").StartAsync(CancellationToken.None);
+        var error = await Record.ExceptionAsync(() => Verificacion(null, "Production").StartAsync(CancellationToken.None));
+
+        Assert.Null(error);
     }
 
     [Fact]
@@ -111,6 +120,7 @@ public class VerificacionRolServicioTests
 
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => Verificacion(inalcanzable, "Production").StartAsync(CancellationToken.None));
-        await Verificacion(inalcanzable, Environments.Development).StartAsync(CancellationToken.None);
+        Assert.Null(await Record.ExceptionAsync(
+            () => Verificacion(inalcanzable, Environments.Development).StartAsync(CancellationToken.None)));
     }
 }
