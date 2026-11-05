@@ -77,24 +77,18 @@ flowchart LR
 
 ---
 
-## ⚙️ Configuración (`appsettings.json`)
+## ⚙️ Configuración
 
-```json
-{
-  "Logging": {
-    "LogLevel": {
-      "Default": "Information",
-      "Microsoft.AspNetCore": "Warning"
-    }
-  },
-  "AllowedHosts": "*",
-  "ServiceUrls": {
-    "CoreService": "http://core-service:3000",
-    "RulesService": "http://rules-service:8080",
-    "Gateway": "http://localhost:80"
-  }
-}
-```
+Dispatch se configura por variables de entorno; `.env.example` las declara todas (copiar a `.env`, que no se versiona). `appsettings.json` solo trae el nivel de log: no hay URLs por omisión que oculten una variable faltante.
+
+| Variable | Uso |
+| :--- | :--- |
+| `CORE_SERVICE_URL` | URL base de Core. **Obligatoria (TEC-06, SCRUM-1453):** sin ella Dispatch no arranca y lo dice al iniciar. Respaldo: `ServiceUrls__CoreService`. |
+| `RULES_SERVICE_URL` | URL base de Rules para el orden de los elegibles; sin ella `eligible-allies` responde `503`. |
+| `SUPABASE_URL`, `SUPABASE_JWT_SECRET` | Validación del JWT (JWKS del proyecto; secreto para HS256 de desarrollo). |
+| `ConnectionStrings__DefaultConnection` | PostgreSQL con el rol `mani_dispatch_svc`, sin `BYPASSRLS` (ADR-0032). |
+
+`docker-compose.yml` también se detiene con un mensaje si `CORE_SERVICE_URL` no está definida.
 
 ### Conexión a PostgreSQL (TEC-21, SCRUM-1468)
 
@@ -156,6 +150,6 @@ Dispatch no lee las tablas de Core (SAD §7.4, ADR-0030): pide la elegibilidad d
 
 | Variable | Uso |
 |---|---|
-| `CORE_SERVICE_URL` | URL base de Core. Obligatoria; sin ella (o si Core no responde, con tiempo de espera de 3 s) los endpoints de elegibilidad devuelven `503`. |
+| `CORE_SERVICE_URL` | URL base de Core (respaldo `ServiceUrls__CoreService`). Obligatoria: sin ella Dispatch no arranca (TEC-06); si Core no responde (tiempo de espera de 3 s) los endpoints de elegibilidad devuelven `503`. |
 
 Endpoints que Dispatch consume en Core: `GET /api/v1/allies/me` (perfil del aliado autenticado), `GET /api/v1/allies/eligible` (admite `tipo=PERSONA_NATURAL|PERSONA_JURIDICA|EMPLEADO_DIRECTO`) y `GET /api/v1/solicitudes/{id}/context`. Dispatch reenvía el `Authorization` (JWT del usuario) y `X-Correlation-ID`; Core autentica con su middleware y toma tenant y rol del claim verificado (ADR-0030). `X-Tenant-Id` viaja solo como referencia.

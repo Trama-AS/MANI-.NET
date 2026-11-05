@@ -8,5 +8,7 @@ obj/
 *.log
 .env
 .env.*
+# La plantilla sí se versiona (TEC-06): declara las variables sin valores secretos.
+!.env.example
 TestResults/
 coverage/

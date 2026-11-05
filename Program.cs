@@ -11,6 +11,10 @@ DotNetEnv.Env.Load();
 
 var builder = WebApplication.CreateBuilder(args);
 
+// TEC-06 (SCRUM-1453): sin la URL de Core, Dispatch no arranca. Antes arrancaba y cada petición de elegibilidad,
+// ofertas o asignación fallaba después con 503; ahora el error sale al iniciar y dice qué variable falta.
+UrlServicioCore.Exigir(builder.Configuration);
+
 // Configurar puerto 5000
 builder.WebHost.ConfigureKestrel(options =>
 {
