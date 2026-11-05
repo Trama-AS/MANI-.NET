@@ -141,7 +141,7 @@ public class ContextoPlataformaMiddleware
                     code = "MANI-PLA-403",
                     status = StatusCodes.Status403Forbidden,
                     correlationId
-                });
+                }, context.RequestAborted);
                 return;
             }
             await _next(context);
@@ -155,7 +155,7 @@ public class ContextoPlataformaMiddleware
             if (!string.IsNullOrWhiteSpace(resultado.Cuerpo))
             {
                 context.Response.ContentType = "application/json";
-                await context.Response.WriteAsync(resultado.Cuerpo);
+                await context.Response.WriteAsync(resultado.Cuerpo, context.RequestAborted);
             }
             else
             {
@@ -165,7 +165,7 @@ public class ContextoPlataformaMiddleware
                     code = "MANI-SRV-503",
                     status = resultado.Status,
                     correlationId
-                });
+                }, context.RequestAborted);
             }
             return;
         }
