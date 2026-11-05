@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using ManiDispatch.Application.DTOs;
 using ManiDispatch.Application.Interfaces;
 using ManiDispatch.Domain.Entities;
+using ManiDispatch.Domain.Exceptions;
 
 namespace ManiDispatch.Application.UseCases;
 
@@ -15,18 +16,28 @@ public class GetEligibleAlliesUseCase
 
     private readonly IAllyRepository _allyRepository;
     private readonly ISolicitudAssignmentRepository? _assignmentRepository;
+    private readonly ITenantRulesReader? _tenantRulesReader;
+    private readonly IRulesClient? _rulesClient;
 
-    public GetEligibleAlliesUseCase(IAllyRepository allyRepository, ISolicitudAssignmentRepository? assignmentRepository = null)
+    public GetEligibleAlliesUseCase(
+        IAllyRepository allyRepository,
+        ISolicitudAssignmentRepository? assignmentRepository = null,
+        ITenantRulesReader? tenantRulesReader = null,
+        IRulesClient? rulesClient = null)
     {
         _allyRepository = allyRepository ?? throw new ArgumentNullException(nameof(allyRepository));
         _assignmentRepository = assignmentRepository;
+        _tenantRulesReader = tenantRulesReader;
+        _rulesClient = rulesClient;
     }
 
     /// <summary>
-    /// Aliados elegibles para una solicitud del cliente o del admin (SCRUM-1398/1400). Zona y categoría salen siempre
-    /// del contexto que entrega Core, nunca de la consulta, y se excluyen los aliados que ya la rechazaron.
+    /// Aliados elegibles para una solicitud del cliente o del admin (SCRUM-1398/1400), en el orden que da Rules con el
+    /// criterio vigente del tenant (SCRUM-1462). Zona y categoría salen siempre del contexto que entrega Core, nunca de
+    /// la consulta, y se excluyen los aliados que ya la rechazaron. El orden se aplica antes de paginar.
     /// </summary>
     /// <exception cref="KeyNotFoundException">La solicitud no existe o la sesión no puede verla.</exception>
+    /// <exception cref="RulesServiceUnavailableException">No se pudo ordenar; no se presenta otro orden (T2).</exception>
     public async Task<MatchResponseDto> ExecuteForRequestAsync(
         Guid requestId,
         Guid tenantId,
@@ -43,23 +54,105 @@ public class GetEligibleAlliesUseCase
             throw new KeyNotFoundException($"Solicitud con ID '{requestId}' no encontrada para el tenant autenticado.");
         }
 
+        var tipoNormalizado = NormalizeTipo(tipo);
         IReadOnlyCollection<Guid> excludeAllyIds = _assignmentRepository != null
             ? await _assignmentRepository.GetRejectedAllyIdsAsync(requestId, tenantId, usuarioId, role)
             : Array.Empty<Guid>();
 
-        var request = new MatchRequestDto
+        var allies = await EligibleAlliesPaging.GetAllAsync(_allyRepository, new MatchCriteria
         {
+            TenantId = tenantId,
+            RequestId = requestId,
+            ZonaId = solicitud.ZonaId,
+            CategoriaId = solicitud.CategoriaId,
+            Tipo = tipoNormalizado,
+            CorrelationId = correlationId,
+            ExcludeAllyIds = excludeAllyIds
+        });
+
+        int resolvedPage = ResolvePage(page);
+        int resolvedPageSize = ResolvePageSize(pageSize);
+        var response = new MatchResponseDto
+        {
+            Message = "Aliados válidos obtenidos con éxito por cobertura y categoría (RF-12, ADR-0011).",
+            CorrelationId = correlationId,
             TenantId = tenantId.ToString(),
             RequestId = requestId.ToString(),
             ZonaId = solicitud.ZonaId.ToString(),
             CategoriaId = solicitud.CategoriaId.ToString(),
-            Tipo = tipo,
-            Page = page,
-            PageSize = pageSize
+            Tipo = tipoNormalizado,
+            Page = resolvedPage,
+            PageSize = resolvedPageSize,
+            TotalCount = allies.Count,
+            Timestamp = DateTime.UtcNow
         };
+        if (allies.Count == 0)
+        {
+            return response;
+        }
 
-        return await ExecuteAsync(request, correlationId, tenantId, requestId.ToString(), excludeAllyIds);
+        if (_tenantRulesReader == null || _rulesClient == null)
+        {
+            throw new RulesServiceUnavailableException("El cliente de Rules no está configurado.");
+        }
+
+        var criterio = await _tenantRulesReader.GetCriterioOrdenListadoAsync(tenantId, correlationId);
+        var ranking = await _rulesClient.RankAlliesAsync(criterio, allies, tenantId, role, correlationId);
+
+        response.Ranking = new RankingInfoDto { Criterio = criterio };
+        response.MatchedAllies = ApplyRanking(allies, ranking)
+            .Skip((resolvedPage - 1) * resolvedPageSize)
+            .Take(resolvedPageSize)
+            .ToList();
+        return response;
     }
+
+    // Una respuesta de Rules que no cubre exactamente a los candidatos no es un orden válido: no se pierde ni se inventa a nadie.
+    private static List<AllyDto> ApplyRanking(List<Ally> allies, IReadOnlyList<RankedAlly> ranking)
+    {
+        var porId = allies.ToDictionary(a => a.Id);
+        if (ranking.Count != allies.Count || ranking.Select(r => r.AllyId).Distinct().Count() != allies.Count
+            || !ranking.All(r => porId.ContainsKey(r.AllyId)))
+        {
+            throw new RulesServiceUnavailableException("Rules devolvió un orden que no corresponde a los candidatos.");
+        }
+
+        return ranking.OrderBy(r => r.Posicion).Select(r =>
+        {
+            var dto = ToDto(porId[r.AllyId]);
+            dto.Posicion = r.Posicion;
+            dto.Puntaje = r.Puntaje;
+            dto.Razones = r.Razones;
+            return dto;
+        }).ToList();
+    }
+
+    private static AllyDto ToDto(Ally a) => new()
+    {
+        AllyId = a.Id.ToString(),
+        NombreRazonSocial = a.NombreRazonSocial,
+        Tipo = a.Tipo,
+        EstadoVerificacion = a.EstadoVerificacion
+    };
+
+    private static string? NormalizeTipo(string? tipo)
+    {
+        if (string.IsNullOrWhiteSpace(tipo))
+        {
+            return null;
+        }
+
+        var normalizado = tipo.Trim().ToUpperInvariant();
+        if (Array.IndexOf(TiposAliado, normalizado) < 0)
+        {
+            throw new ArgumentException($"El parámetro Tipo '{tipo}' no es válido. Valores permitidos: {string.Join(", ", TiposAliado)}.", nameof(tipo));
+        }
+        return normalizado;
+    }
+
+    private static int ResolvePage(int? page) => page.HasValue && page.Value > 0 ? page.Value : 1;
+
+    private static int ResolvePageSize(int? pageSize) => pageSize.HasValue && pageSize.Value > 0 ? pageSize.Value : 20;
 
     public async Task<MatchResponseDto> ExecuteAsync(
         MatchRequestDto request,
@@ -93,18 +186,9 @@ public class GetEligibleAlliesUseCase
             throw new ArgumentException($"El parámetro CategoriaId '{request.CategoriaId}' no es un UUID válido.", nameof(request.CategoriaId));
         }
 
-        string? tipo = null;
-        if (!string.IsNullOrWhiteSpace(request.Tipo))
-        {
-            tipo = request.Tipo.Trim().ToUpperInvariant();
-            if (Array.IndexOf(TiposAliado, tipo) < 0)
-            {
-                throw new ArgumentException($"El parámetro Tipo '{request.Tipo}' no es válido. Valores permitidos: {string.Join(", ", TiposAliado)}.", nameof(request.Tipo));
-            }
-        }
-
-        int page = request.Page.HasValue && request.Page.Value > 0 ? request.Page.Value : 1;
-        int pageSize = request.PageSize.HasValue && request.PageSize.Value > 0 ? request.PageSize.Value : 20;
+        var tipo = NormalizeTipo(request.Tipo);
+        int page = ResolvePage(request.Page);
+        int pageSize = ResolvePageSize(request.PageSize);
 
         Guid? parsedRequestId = null;
         if (!string.IsNullOrWhiteSpace(requestId) && Guid.TryParse(requestId, out var reqGuid))
@@ -127,13 +211,7 @@ public class GetEligibleAlliesUseCase
 
         var (allies, totalCount) = await _allyRepository.GetEligibleAlliesAsync(criteria);
 
-        var allyDtos = allies.Select(a => new AllyDto
-        {
-            AllyId = a.Id.ToString(),
-            NombreRazonSocial = a.NombreRazonSocial,
-            Tipo = a.Tipo,
-            EstadoVerificacion = a.EstadoVerificacion
-        }).ToList();
+        var allyDtos = allies.Select(ToDto).ToList();
 
         return new MatchResponseDto
         {

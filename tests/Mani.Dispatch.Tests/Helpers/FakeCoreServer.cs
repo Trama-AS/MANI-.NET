@@ -23,6 +23,9 @@ public sealed class FakeCoreServer : IDisposable
 
     public string BaseUrl { get; }
     public bool FailNotifications { get; set; }
+    /// <summary>Si tiene valor, Core acepta esa cantidad de ofertas más y luego responde 503 (corte a mitad del despacho).</summary>
+    public int? AcceptOffersBeforeFailing { get; set; }
+    public bool FailEligible { get; set; }
 
     public FakeCoreServer()
     {
@@ -128,6 +131,7 @@ public sealed class FakeCoreServer : IDisposable
 
         if (method == "GET" && path == "/api/v1/allies/eligible")
         {
+            if (FailEligible) return (503, new { error = "no disponible" });
             _eligibleQueries.Add(query.ToString() ?? string.Empty);
             var excluded = (query["excludeAllyIds"] ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries);
             var allies = _allies.Where(a => a.Tenant == tenant && !excluded.Contains(a.Id.ToString()))
@@ -171,6 +175,8 @@ public sealed class FakeCoreServer : IDisposable
         if (method == "POST" && path == "/api/v1/notifications")
         {
             if (FailNotifications) return (503, new { error = "no disponible" });
+            if (AcceptOffersBeforeFailing == 0) return (503, new { error = "no disponible" });
+            if (AcceptOffersBeforeFailing.HasValue) AcceptOffersBeforeFailing--;
             _notifications.Add((tenant, JsonDocument.Parse(body).RootElement.Clone()));
             return (201, new { ok = true });
         }
