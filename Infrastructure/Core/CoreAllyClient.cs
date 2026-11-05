@@ -35,7 +35,7 @@ public class CoreAllyClient : IAllyRepository
     {
         _httpClient = httpClient;
         _logger = logger;
-        _coreServiceUrl = configuration["CORE_SERVICE_URL"]?.TrimEnd('/');
+        _coreServiceUrl = UrlServicioCore.Leer(configuration);
     }
 
     public async Task<(IEnumerable<Ally> Allies, int TotalCount)> GetEligibleAlliesAsync(MatchCriteria criteria)

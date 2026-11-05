@@ -1,6 +1,7 @@
 using System.Text.Json;
 using ManiDispatch.Application.Interfaces;
 using ManiDispatch.Application.UseCases;
+using ManiDispatch.Infrastructure.Auth;
 using ManiDispatch.Infrastructure.Core;
 using ManiDispatch.Infrastructure.Rules;
 using ManiDispatch.Infrastructure.Dispatch;
@@ -10,6 +11,10 @@ using ManiDispatch.Infrastructure.Repositories;
 DotNetEnv.Env.Load();
 
 var builder = WebApplication.CreateBuilder(args);
+
+// TEC-06 (SCRUM-1453): sin la URL de Core, Dispatch no arranca. Antes arrancaba y cada petición de elegibilidad,
+// ofertas o asignación fallaba después con 503; ahora el error sale al iniciar y dice qué variable falta.
+UrlServicioCore.Exigir(builder.Configuration);
 
 // Configurar puerto 5000
 builder.WebHost.ConfigureKestrel(options =>
@@ -40,6 +45,9 @@ builder.Services.AddHttpClient<ICoreAssignmentClient, CoreAssignmentClient>(clie
 builder.Services.AddHttpClient<ITenantRulesReader, CoreTenantRulesClient>(client => client.Timeout = TimeSpan.FromSeconds(3))
     .AddHttpMessageHandler<ForwardAuthorizationHandler>();
 builder.Services.AddHttpClient<IRulesClient, RulesClient>(client => client.Timeout = TimeSpan.FromSeconds(3));
+// Contexto efectivo del administrador de plataforma (SCRUM-901): lo resuelve Core.
+builder.Services.AddHttpClient<ICoreContextoClient, CoreContextoClient>(client => client.Timeout = TimeSpan.FromSeconds(3))
+    .AddHttpMessageHandler<ForwardAuthorizationHandler>();
 builder.Services.AddScoped<ISolicitudAssignmentRepository, PostgresSolicitudAssignmentRepository>();
 // SCRUM-1468: fuera de Development, Dispatch no arranca si su conexión usa un rol que salta RLS.
 builder.Services.AddHostedService<VerificacionRolServicio>();
@@ -64,6 +72,9 @@ app.Use(async (context, next) =>
     context.Response.Headers["X-Correlation-ID"] = correlationId;
     await next();
 });
+
+// SCRUM-901: sesión efectiva (tenant elegido / actuar como) antes de los controladores.
+app.UseMiddleware<ContextoPlataformaMiddleware>();
 
 app.MapControllers();
 

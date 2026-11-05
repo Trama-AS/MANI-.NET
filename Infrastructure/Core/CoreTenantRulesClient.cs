@@ -26,7 +26,7 @@ public class CoreTenantRulesClient : ITenantRulesReader
     {
         _httpClient = httpClient;
         _logger = logger;
-        _coreServiceUrl = configuration["CORE_SERVICE_URL"]?.TrimEnd('/');
+        _coreServiceUrl = UrlServicioCore.Leer(configuration);
     }
 
     public async Task<string> GetCriterioOrdenListadoAsync(Guid tenantId, string correlationId)

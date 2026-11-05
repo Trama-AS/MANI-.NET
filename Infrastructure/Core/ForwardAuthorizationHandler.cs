@@ -21,12 +21,27 @@ public class ForwardAuthorizationHandler : DelegatingHandler
 
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        var header = _httpContextAccessor.HttpContext?.Request.Headers.Authorization.ToString();
+        var entrante = _httpContextAccessor.HttpContext?.Request;
+        var header = entrante?.Headers.Authorization.ToString();
         if (request.Headers.Authorization == null
             && !string.IsNullOrWhiteSpace(header)
             && AuthenticationHeaderValue.TryParse(header, out var authorization))
         {
             request.Headers.Authorization = authorization;
+        }
+
+        // SCRUM-901: tenant elegido y usuario con el que actúa el administrador de plataforma. Core los valida
+        // (solo valen para ese permiso), así que reenviarlos no amplía el acceso de ningún otro rol.
+        if (entrante != null)
+        {
+            foreach (var nombre in new[] { "X-Mani-Tenant", "X-Mani-Actuar-Como" })
+            {
+                var valor = entrante.Headers[nombre].ToString();
+                if (!string.IsNullOrWhiteSpace(valor) && !request.Headers.Contains(nombre))
+                {
+                    request.Headers.TryAddWithoutValidation(nombre, valor);
+                }
+            }
         }
 
         return base.SendAsync(request, cancellationToken);
