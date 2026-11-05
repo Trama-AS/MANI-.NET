@@ -13,5 +13,7 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://+:5000
+      # TEC-06 (SCRUM-1453): Dispatch no arranca sin la URL de Core; compose también se detiene si falta.
+      - CORE_SERVICE_URL=${CORE_SERVICE_URL:?Defina CORE_SERVICE_URL en .env (ver .env.example)}
     env_file:
       - .env

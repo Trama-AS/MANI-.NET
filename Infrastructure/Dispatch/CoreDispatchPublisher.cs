@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using ManiDispatch.Application.Interfaces;
 using ManiDispatch.Domain.Exceptions;
+using ManiDispatch.Infrastructure.Core;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
@@ -29,7 +30,7 @@ public class CoreDispatchPublisher : IDispatchPublisher
     {
         _httpClient = httpClient;
         _logger = logger;
-        _coreServiceUrl = configuration["CORE_SERVICE_URL"]?.TrimEnd('/');
+        _coreServiceUrl = UrlServicioCore.Leer(configuration);
     }
 
     public async Task PublishOfferAsync(DispatchOffer offer)
