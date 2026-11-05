@@ -28,11 +28,7 @@ public class PostgresSolicitudAssignmentRepository : ISolicitudAssignmentReposit
         ILogger<PostgresSolicitudAssignmentRepository> logger)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        _connectionString = configuration != null
-            ? (configuration["ConnectionStrings:DefaultConnection"]
-               ?? configuration["SUPABASE_DB_URL"]
-               ?? configuration["DATABASE_URL"])
-            : null;
+        _connectionString = CadenaConexion.Resolver(configuration);
     }
 
     public Task<bool> RejectRequestAsync(Guid requestId, Guid tenantId, Guid usuarioId, Guid aliadoId, string motivo, string? detalle)
