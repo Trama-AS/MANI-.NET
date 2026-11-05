@@ -5,7 +5,8 @@ using Xunit;
 namespace ManiDispatch.Tests.Fixtures;
 
 /// <summary>
-/// PostgreSQL 15 real en un contenedor, con las migraciones oficiales 001-008 del Gateway.
+/// PostgreSQL 15 real en un contenedor, con las migraciones oficiales 001-008 del Gateway y las de Core que tocan
+/// tablas de Dispatch (Database/core).
 /// Se crea una sola vez por colección; cada prueba siembra sus propios datos con un tenant nuevo.
 /// </summary>
 public sealed class PostgresFixture : IAsyncLifetime
@@ -34,6 +35,33 @@ public sealed class PostgresFixture : IAsyncLifetime
 
         var dir = Path.Combine(AppContext.BaseDirectory, "Database", "migrations");
         foreach (var file in Directory.GetFiles(dir, "*.sql").OrderBy(f => f, StringComparer.Ordinal))
+        {
+            await Execute(connection, await File.ReadAllTextAsync(file));
+        }
+
+        // app.set_context la crea la migración 0006 de Core (MANI-Node), que no vive en este repositorio. El doble
+        // fija los mismos claims locales a la transacción y además deja constancia del contexto pedido, para que las
+        // pruebas comprueben que Dispatch lo fija (D-2). Las políticas RLS por rol se prueban en MANI-Node.
+        await Execute(connection, @"
+            CREATE SCHEMA IF NOT EXISTS app;
+            CREATE TABLE IF NOT EXISTS app.contexto_registrado (
+                tenant_id uuid NOT NULL,
+                user_id uuid,
+                user_role text NOT NULL,
+                txid bigint NOT NULL DEFAULT txid_current()
+            );
+            CREATE OR REPLACE FUNCTION app.set_context(p_tenant_id uuid, p_user_id uuid, p_user_role text)
+            RETURNS void LANGUAGE plpgsql AS $$
+            BEGIN
+                PERFORM set_config('request.jwt.claims', json_build_object(
+                    'sub', p_user_id,
+                    'app_metadata', json_build_object('tenant_id', p_tenant_id, 'user_role', lower(p_user_role)))::text, true);
+                INSERT INTO app.contexto_registrado (tenant_id, user_id, user_role) VALUES (p_tenant_id, p_user_id, lower(p_user_role));
+            END $$;");
+
+        // Migraciones de Core (MANI-Node) sobre tablas de Dispatch, p. ej. 0025: motivo de rechazo obligatorio.
+        var coreDir = Path.Combine(AppContext.BaseDirectory, "Database", "core");
+        foreach (var file in Directory.GetFiles(coreDir, "*.sql").OrderBy(f => f, StringComparer.Ordinal))
         {
             await Execute(connection, await File.ReadAllTextAsync(file));
         }

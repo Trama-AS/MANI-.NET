@@ -33,7 +33,7 @@ public class AssignmentsController : ControllerBase
             correlationId = $"disp-{Guid.NewGuid():N}";
         }
 
-        var authResult = JwtAuthHelper.Authenticate(Request.Headers.Authorization);
+        var authResult = AuthEfectiva.Obtener(HttpContext);
         if (!authResult.IsAuthenticated)
         {
             return Unauthorized(new { error = authResult.ErrorMessage, status = StatusCodes.Status401Unauthorized, correlationId });

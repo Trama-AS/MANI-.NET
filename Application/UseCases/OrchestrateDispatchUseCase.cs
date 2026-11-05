@@ -12,19 +12,26 @@ public class OrchestrateDispatchUseCase
 {
     private readonly IAllyRepository _allyRepository;
     private readonly IDispatchPublisher _dispatchPublisher;
+    private readonly ISolicitudAssignmentRepository? _assignmentRepository;
 
     public OrchestrateDispatchUseCase(
         IAllyRepository allyRepository,
-        IDispatchPublisher dispatchPublisher)
+        IDispatchPublisher dispatchPublisher,
+        ISolicitudAssignmentRepository? assignmentRepository = null)
     {
         _allyRepository = allyRepository ?? throw new ArgumentNullException(nameof(allyRepository));
         _dispatchPublisher = dispatchPublisher ?? throw new ArgumentNullException(nameof(dispatchPublisher));
+        _assignmentRepository = assignmentRepository;
     }
 
+    /// <param name="usuarioId">Cliente o admin que despacha: con su contexto se leen los rechazos (SCRUM-1404).</param>
+    /// <param name="role">Rol de la sesión (cliente o admin_tenant).</param>
     public async Task<OrchestrateResponseDto> ExecuteAsync(
         OrchestrateRequestDto request,
         string correlationId,
-        Guid tenantId)
+        Guid tenantId,
+        Guid? usuarioId = null,
+        string? role = null)
     {
         if (request == null)
         {
@@ -51,61 +58,49 @@ public class OrchestrateDispatchUseCase
             throw new KeyNotFoundException($"Solicitud con ID '{request.RequestId}' no encontrada para el tenant autenticado.");
         }
 
-        if (string.Equals(solicitud.Estado, "ASIGNADA", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(solicitud.Estado, "CANCELADA", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(solicitud.Estado, "FINALIZADA", StringComparison.OrdinalIgnoreCase))
+        // D-6: solo se despacha una solicitud PENDIENTE; cualquier otro estado ya salió del broadcast.
+        if (!string.Equals(solicitud.Estado, "PENDIENTE", StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException(
-                $"La solicitud '{request.RequestId}' ya se encuentra en estado '{solicitud.Estado}' y no admite nuevo despacho.");
+                $"MANI-DSP-409E: la solicitud '{request.RequestId}' ya se encuentra en estado '{solicitud.Estado}' y no admite nuevo despacho.");
         }
 
         resolvedZonaGuid = solicitud.ZonaId;
         resolvedCategoriaGuid = solicitud.CategoriaId;
 
-        // Idempotencia (RNF-03): verificar si ya existen ofertas previas para este requestId y tenantId
-        var existingOffers = await _dispatchPublisher.GetOffersByRequestAsync(requestGuid, tenantId);
-        if (existingOffers != null && existingOffers.Count > 0)
-        {
-            var existingDtoList = existingOffers.Select(o => new OrchestratedOfferDto
-            {
-                AllyId = o.AllyId.ToString(),
-                NombreRazonSocial = o.AllyNombre,
-                EstadoOferta = o.Estado,
-                FechaOferta = o.Timestamp
-            }).ToList();
+        // Idempotencia (RNF-03): las ofertas ya publicadas no se repiten; un reintento completa solo las que faltan.
+        var existingOffers = await _dispatchPublisher.GetOffersByRequestAsync(requestGuid, tenantId)
+            ?? Array.Empty<DispatchOffer>();
 
-            return new OrchestrateResponseDto
-            {
-                Message = $"Despacho ya transmitido previamente. Reintento idempotente con {existingDtoList.Count} ofertas (RNF-03).",
-                RequestId = request.RequestId,
-                TenantId = tenantId.ToString(),
-                ZonaId = resolvedZonaGuid.ToString(),
-                CategoriaId = resolvedCategoriaGuid.ToString(),
-                Status = "DISPATCHED",
-                CorrelationId = correlationId,
-                CandidatesCount = existingDtoList.Count,
-                CandidatesNotified = existingDtoList,
-                Timestamp = existingOffers.First().Timestamp
-            };
+        // Los aliados que ya rechazaron no reciben otra vez la oferta (SCRUM-1404): Dispatch se los pasa a Core.
+        IReadOnlyCollection<Guid> excludeAllyIds = Array.Empty<Guid>();
+        if (_assignmentRepository != null && usuarioId.HasValue && !string.IsNullOrWhiteSpace(role))
+        {
+            excludeAllyIds = await _assignmentRepository.GetRejectedAllyIdsAsync(requestGuid, tenantId, usuarioId.Value, role);
         }
 
-        var criteria = new MatchCriteria
+        var alliesList = await EligibleAlliesPaging.GetAllAsync(_allyRepository, new MatchCriteria
         {
             TenantId = tenantId,
             RequestId = requestGuid,
             ZonaId = resolvedZonaGuid,
             CategoriaId = resolvedCategoriaGuid,
-            Page = 1,
-            PageSize = 50
-        };
+            CorrelationId = correlationId,
+            ExcludeAllyIds = excludeAllyIds
+        });
 
-        var (allies, totalCount) = await _allyRepository.GetEligibleAlliesAsync(criteria);
-        var alliesList = allies.ToList();
-
-        var notifiedOffers = new List<OrchestratedOfferDto>();
+        var alreadyOffered = existingOffers.Select(o => o.AllyId).ToHashSet();
+        var notifiedOffers = existingOffers.Select(o => new OrchestratedOfferDto
+        {
+            AllyId = o.AllyId.ToString(),
+            NombreRazonSocial = o.AllyNombre,
+            EstadoOferta = o.Estado,
+            FechaOferta = o.Timestamp
+        }).ToList();
         var now = DateTime.UtcNow;
+        int published = 0;
 
-        foreach (var ally in alliesList)
+        foreach (var ally in alliesList.Where(a => !alreadyOffered.Contains(a.Id)))
         {
             var offer = new DispatchOffer(
                 RequestId: requestGuid,
@@ -118,6 +113,7 @@ public class OrchestrateDispatchUseCase
             );
 
             await _dispatchPublisher.PublishOfferAsync(offer);
+            published++;
 
             notifiedOffers.Add(new OrchestratedOfferDto
             {
@@ -130,13 +126,9 @@ public class OrchestrateDispatchUseCase
 
         bool hasCandidates = notifiedOffers.Count > 0;
         string status = hasCandidates ? "DISPATCHED" : "NO_ELIGIBLE_ALLIES";
-        string message = hasCandidates
-            ? $"Despacho orquestado con éxito. Oferta transmitida a {notifiedOffers.Count} aliados elegibles (ADR-0016)."
-            : "Despacho procesado: no se encontraron aliados con cobertura activa para la zona y categoría especificadas.";
-
         return new OrchestrateResponseDto
         {
-            Message = message,
+            Message = BuildMessage(notifiedOffers.Count, existingOffers.Count, published),
             RequestId = request.RequestId,
             TenantId = tenantId.ToString(),
             ZonaId = resolvedZonaGuid.ToString(),
@@ -145,7 +137,22 @@ public class OrchestrateDispatchUseCase
             CorrelationId = correlationId,
             CandidatesCount = notifiedOffers.Count,
             CandidatesNotified = notifiedOffers,
-            Timestamp = now
+            Timestamp = published == 0 && existingOffers.Count > 0 ? existingOffers[0].Timestamp : now
         };
+    }
+
+    private static string BuildMessage(int total, int previous, int published)
+    {
+        if (total == 0)
+        {
+            return "Despacho procesado: no se encontraron aliados con cobertura activa para la zona y categoría especificadas.";
+        }
+        if (previous == 0)
+        {
+            return $"Despacho orquestado con éxito. Oferta transmitida a {total} aliados elegibles (ADR-0016).";
+        }
+        return published == 0
+            ? $"Despacho ya transmitido previamente. Reintento idempotente con {total} ofertas (RNF-03)."
+            : $"Reintento idempotente: se completaron {published} ofertas faltantes, {total} en total (RNF-03).";
     }
 }

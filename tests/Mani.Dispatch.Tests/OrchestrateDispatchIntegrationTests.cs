@@ -93,4 +93,55 @@ public class OrchestrateDispatchIntegrationTests
         await Assert.ThrowsAsync<CoreServiceUnavailableException>(() =>
             CreateUseCase(core.BaseUrl).ExecuteAsync(new OrchestrateRequestDto(solicitud.ToString()), "corr", tenant));
     }
+
+    [Fact]
+    public async Task Orchestrate_RetryAfterCutInTheMiddle_CompletesTheMissingOffersWithoutDuplicating()
+    {
+        using var core = new FakeCoreServer { AcceptOffersBeforeFailing = 2 };
+        var tenant = Guid.NewGuid();
+        for (var i = 0; i < 5; i++)
+        {
+            core.AddEligibleAlly(tenant, $"Aliado {i}");
+        }
+        var solicitud = core.AddSolicitud(tenant);
+        var useCase = CreateUseCase(core.BaseUrl);
+        var request = new OrchestrateRequestDto(solicitud.ToString());
+
+        await Assert.ThrowsAsync<CoreServiceUnavailableException>(() => useCase.ExecuteAsync(request, "corr-1", tenant));
+        Assert.Equal(2, core.CountOffers(tenant, solicitud));
+
+        core.AcceptOffersBeforeFailing = null;
+        var retry = await useCase.ExecuteAsync(request, "corr-2", tenant);
+
+        Assert.Equal("DISPATCHED", retry.Status);
+        Assert.Equal(5, retry.CandidatesCount);
+        Assert.Equal(5, retry.CandidatesNotified.Select(o => o.AllyId).Distinct().Count());
+        Assert.Contains("3 ofertas faltantes", retry.Message);
+        Assert.Equal(5, core.CountOffers(tenant, solicitud));
+
+        var secondRetry = await useCase.ExecuteAsync(request, "corr-3", tenant);
+
+        Assert.Equal(5, secondRetry.CandidatesCount);
+        Assert.Contains("idempotente", secondRetry.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(5, core.CountOffers(tenant, solicitud));
+    }
+
+    [Fact]
+    public async Task Orchestrate_RetryWhenCoreCannotListEligibles_FailsInsteadOfReportingItAsComplete()
+    {
+        using var core = new FakeCoreServer { AcceptOffersBeforeFailing = 1 };
+        var tenant = Guid.NewGuid();
+        core.AddEligibleAlly(tenant, "Ana");
+        core.AddEligibleAlly(tenant, "Beto");
+        var solicitud = core.AddSolicitud(tenant);
+        var useCase = CreateUseCase(core.BaseUrl);
+        var request = new OrchestrateRequestDto(solicitud.ToString());
+        await Assert.ThrowsAsync<CoreServiceUnavailableException>(() => useCase.ExecuteAsync(request, "corr-1", tenant));
+
+        core.AcceptOffersBeforeFailing = null;
+        core.FailEligible = true;
+
+        await Assert.ThrowsAsync<CoreServiceUnavailableException>(() => useCase.ExecuteAsync(request, "corr-2", tenant));
+        Assert.Equal(1, core.CountOffers(tenant, solicitud));
+    }
 }
