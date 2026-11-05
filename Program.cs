@@ -45,6 +45,8 @@ builder.Services.AddHttpClient<IRulesClient, RulesClient>(client => client.Timeo
 builder.Services.AddHttpClient<ICoreContextoClient, CoreContextoClient>(client => client.Timeout = TimeSpan.FromSeconds(3))
     .AddHttpMessageHandler<ForwardAuthorizationHandler>();
 builder.Services.AddScoped<ISolicitudAssignmentRepository, PostgresSolicitudAssignmentRepository>();
+// SCRUM-1468: fuera de Development, Dispatch no arranca si su conexión usa un rol que salta RLS.
+builder.Services.AddHostedService<VerificacionRolServicio>();
 builder.Services.AddScoped<GetEligibleAlliesUseCase>();
 builder.Services.AddScoped<OrchestrateDispatchUseCase>();
 builder.Services.AddScoped<AcceptDispatchOfferUseCase>();
