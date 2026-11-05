@@ -96,6 +96,16 @@ flowchart LR
 }
 ```
 
+### Conexión a PostgreSQL (TEC-21, SCRUM-1468)
+
+La cadena se lee de `ConnectionStrings__DefaultConnection` (o, en ese orden, `SUPABASE_DB_URL` y `DATABASE_URL`). En QA y producción **debe conectar como `mani_dispatch_svc`**, el rol propio de Dispatch sin `BYPASSRLS` (ADR-0032):
+
+```
+ConnectionStrings__DefaultConnection=Host=<host>;Database=postgres;Username=mani_dispatch_svc;Password=<clave>;SSL Mode=Require
+```
+
+Cada operación del repositorio fija `app.set_context` y las políticas RLS aíslan los tenants; con `postgres` (superusuario, `BYPASSRLS`) las políticas no se evaluarían. Por eso, **fuera de `Development`, Dispatch no arranca** si el rol de la conexión es superusuario o tiene `BYPASSRLS`, ni si no puede comprobarlo (`Infrastructure/Repositories/VerificacionRolServicio.cs`); en `Development` solo lo avisa en el log. La contraseña la asigna operaciones con `db/ops/credenciales_roles_servicio.sql` de MANI-Node.
+
 ---
 
 ## 💻 Ejecución Local
