@@ -61,7 +61,7 @@ public class AssignmentsController : ControllerBase
 
         try
         {
-            var requestIds = await _getAllyAssignmentsUseCase.ExecuteAsync(authResult.TenantId!.Value, usuarioId);
+            var requestIds = await _getAllyAssignmentsUseCase.ExecuteAsync(authResult.TenantId!.Value, usuarioId, correlationId);
             return Ok(new
             {
                 requestIds = requestIds.Select(id => id.ToString()).ToList(),
@@ -73,22 +73,16 @@ public class AssignmentsController : ControllerBase
         {
             return StatusCode(StatusCodes.Status403Forbidden, new { error = ex.Message, status = StatusCodes.Status403Forbidden, correlationId });
         }
+        catch (CoreAccessDeniedException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = ex.Message, code = ex.Code, status = StatusCodes.Status403Forbidden, correlationId });
+        }
         catch (CoreServiceUnavailableException)
         {
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new
             {
                 error = "Core no está disponible para identificar al aliado.",
                 code = "CORE_SERVICE_UNAVAILABLE",
-                status = StatusCodes.Status503ServiceUnavailable,
-                correlationId
-            });
-        }
-        catch (InvalidOperationException)
-        {
-            return StatusCode(StatusCodes.Status503ServiceUnavailable, new
-            {
-                error = "No es posible consultar las asignaciones por indisponibilidad de la base de datos.",
-                code = "DATABASE_UNAVAILABLE",
                 status = StatusCodes.Status503ServiceUnavailable,
                 correlationId
             });

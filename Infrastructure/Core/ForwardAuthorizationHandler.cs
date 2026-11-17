@@ -30,11 +30,11 @@ public class ForwardAuthorizationHandler : DelegatingHandler
             request.Headers.Authorization = authorization;
         }
 
-        // SCRUM-901: tenant elegido y usuario con el que actúa el administrador de plataforma. Core los valida
-        // (solo valen para ese permiso), así que reenviarlos no amplía el acceso de ningún otro rol.
+        // SCRUM-901 y SCRUM-1658: tenant elegido, usuario con el que actúa el administrador de plataforma y
+        // X-Correlation-ID de la petición en curso para que el mismo ID viaje por todos los servicios.
         if (entrante != null)
         {
-            foreach (var nombre in new[] { "X-Mani-Tenant", "X-Mani-Actuar-Como" })
+            foreach (var nombre in new[] { "X-Mani-Tenant", "X-Mani-Actuar-Como", "X-Correlation-ID" })
             {
                 var valor = entrante.Headers[nombre].ToString();
                 if (!string.IsNullOrWhiteSpace(valor) && !request.Headers.Contains(nombre))
