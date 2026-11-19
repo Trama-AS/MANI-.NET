@@ -58,10 +58,9 @@ public class PostgresSolicitudAssignmentRepository : ISolicitudAssignmentReposit
         const string sql = @"
             SELECT solicitud_id
             FROM solicitud_rechazo
-            WHERE tenant_id = @TenantId AND aliado_id = @AliadoId;";
+            WHERE tenant_id = $1 AND aliado_id = $2;";
 
-        return WithTenantContextAsync(tenantId, usuarioId, RolAliado, "consultar los rechazos del aliado", async (connection, tx) =>
-            (IReadOnlyList<Guid>)(await connection.QueryAsync<Guid>(sql, new { TenantId = tenantId, AliadoId = aliadoId }, tx)).ToList());
+        return QueryIdsInTenantContextAsync(tenantId, usuarioId, RolAliado, "consultar los rechazos del aliado", sql, tenantId, aliadoId);
     }
 
     public Task<IReadOnlyList<Guid>> GetRejectedAllyIdsAsync(Guid requestId, Guid tenantId, Guid usuarioId, string role)
@@ -70,10 +69,9 @@ public class PostgresSolicitudAssignmentRepository : ISolicitudAssignmentReposit
         const string sql = @"
             SELECT aliado_id
             FROM solicitud_rechazo
-            WHERE tenant_id = @TenantId AND solicitud_id = @RequestId;";
+            WHERE tenant_id = $1 AND solicitud_id = $2;";
 
-        return WithTenantContextAsync(tenantId, usuarioId, role, "consultar los rechazos de la solicitud", async (connection, tx) =>
-            (IReadOnlyList<Guid>)(await connection.QueryAsync<Guid>(sql, new { TenantId = tenantId, RequestId = requestId }, tx)).ToList());
+        return QueryIdsInTenantContextAsync(tenantId, usuarioId, role, "consultar los rechazos de la solicitud", sql, tenantId, requestId);
     }
 
     public Task<IReadOnlyList<Guid>> GetAssignedRequestIdsAsync(Guid tenantId, Guid usuarioId, Guid aliadoId)
@@ -83,12 +81,63 @@ public class PostgresSolicitudAssignmentRepository : ISolicitudAssignmentReposit
         const string sql = @"
             SELECT id
             FROM solicitud
-            WHERE tenant_id = @TenantId
-              AND aliado_id = @AliadoId
+            WHERE tenant_id = $1
+              AND aliado_id = $2
               AND estado <> 'CANCELADA';";
 
-        return WithTenantContextAsync(tenantId, usuarioId, RolAliado, "consultar las asignaciones del aliado", async (connection, tx) =>
-            (IReadOnlyList<Guid>)(await connection.QueryAsync<Guid>(sql, new { TenantId = tenantId, AliadoId = aliadoId }, tx)).ToList());
+        return QueryIdsInTenantContextAsync(tenantId, usuarioId, RolAliado, "consultar las asignaciones del aliado", sql, tenantId, aliadoId);
+    }
+
+    /// <summary>
+    /// Lectura de una lista de ids en un solo viaje a la base (SCRUM-1652): <c>app.set_context</c> y la consulta van en
+    /// el mismo lote. PostgreSQL ejecuta un lote sin BEGIN explícito como una transacción implícita que termina con el
+    /// Sync final, así que el contexto local (set_config con is_local) aplica a la consulta y muere con el lote, igual que
+    /// con BEGIN … COMMIT, pero sin tres viajes extra. En QA cada viaje cuesta ~110 ms y retenía la conexión ese tiempo.
+    /// </summary>
+    private async Task<IReadOnlyList<Guid>> QueryIdsInTenantContextAsync(
+        Guid tenantId,
+        Guid usuarioId,
+        string role,
+        string operacion,
+        string sql,
+        params object[] parametros)
+    {
+        if (string.IsNullOrWhiteSpace(_connectionString))
+        {
+            throw new DispatchDatabaseUnavailableException("La base de datos PostgreSQL no está disponible: cadena de conexión no configurada (ADR-0016).");
+        }
+
+        try
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync();
+
+            var contexto = new NpgsqlBatchCommand("SELECT app.set_context($1, $2, $3)");
+            contexto.Parameters.Add(new NpgsqlParameter { Value = tenantId });
+            contexto.Parameters.Add(new NpgsqlParameter { Value = usuarioId });
+            contexto.Parameters.Add(new NpgsqlParameter { Value = role.Trim().ToLowerInvariant() });
+            var consulta = new NpgsqlBatchCommand(sql);
+            foreach (var valor in parametros)
+            {
+                consulta.Parameters.Add(new NpgsqlParameter { Value = valor });
+            }
+
+            await using var batch = new NpgsqlBatch(connection) { BatchCommands = { contexto, consulta } };
+            await using var reader = await batch.ExecuteReaderAsync();
+            // El primer resultado es el de set_context (void); los ids vienen en el segundo.
+            await reader.NextResultAsync();
+            var ids = new List<Guid>();
+            while (await reader.ReadAsync())
+            {
+                ids.Add(reader.GetGuid(0));
+            }
+            return ids;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Fallo en base de datos al {Operacion} (tenant {TenantId}).", operacion, tenantId);
+            throw new DispatchDatabaseUnavailableException($"Fallo en base de datos al {operacion}.", ex);
+        }
     }
 
     private async Task<T> WithTenantContextAsync<T>(

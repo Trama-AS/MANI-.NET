@@ -15,29 +15,26 @@ public class GetEligibleAlliesRankingTests
     private readonly Guid _tenantId = Guid.NewGuid();
     private readonly Guid _requestId = Guid.NewGuid();
     private readonly Mock<IAllyRepository> _repo = new();
-    private readonly Mock<ITenantRulesReader> _tenantRules = new();
     private readonly Mock<IRulesClient> _rules = new();
     private readonly GetEligibleAlliesUseCase _useCase;
 
     public GetEligibleAlliesRankingTests()
     {
-        _repo.Setup(r => r.GetSolicitudContextAsync(_requestId, _tenantId)).ReturnsAsync(new SolicitudContext
-        {
-            Id = _requestId,
-            TenantId = _tenantId,
-            ZonaId = Guid.NewGuid(),
-            CategoriaId = Guid.NewGuid(),
-            Estado = "PENDIENTE"
-        });
-        _tenantRules.Setup(t => t.GetCriterioOrdenListadoAsync(_tenantId, "corr")).ReturnsAsync("CALIFICACION");
-        _useCase = new GetEligibleAlliesUseCase(_repo.Object, null, _tenantRules.Object, _rules.Object);
+        _useCase = new GetEligibleAlliesUseCase(_repo.Object, null, _rules.Object);
     }
 
-    private List<Ally> SetupAllies(int count)
+    // Core entrega contexto, elegibles y criterio en una sola lectura, paginada como Core (SCRUM-1652).
+    private List<Ally> SetupAllies(int count, string? criterio = "CALIFICACION")
     {
         var allies = Enumerable.Range(0, count).Select(i => new Ally { Id = Guid.NewGuid(), NombreRazonSocial = $"Aliado {i}" }).ToList();
-        _repo.Setup(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()))
-             .ReturnsAsync((MatchCriteria c) => (allies.Skip((c.Page - 1) * c.PageSize).Take(c.PageSize), allies.Count));
+        _repo.Setup(r => r.GetEligibleForRequestAsync(_requestId, _tenantId, It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<int>(), "corr"))
+             .ReturnsAsync((Guid _, Guid _, string? _, int page, int pageSize, string _) => new EligibleForRequest
+             {
+                 Solicitud = new SolicitudContext { Id = _requestId, ZonaId = Guid.NewGuid(), CategoriaId = Guid.NewGuid(), Estado = "PENDIENTE" },
+                 CriterioOrdenListado = criterio,
+                 Allies = allies.Skip((page - 1) * pageSize).Take(pageSize).ToList(),
+                 TotalCount = allies.Count
+             });
         return allies;
     }
 
@@ -67,10 +64,9 @@ public class GetEligibleAlliesRankingTests
     }
 
     [Fact]
-    public async Task UsesTheCriterionOfTheTenant()
+    public async Task UsesTheCriterionThatCoreReturnsForTheTenant()
     {
-        var allies = SetupAllies(1);
-        _tenantRules.Setup(t => t.GetCriterioOrdenListadoAsync(_tenantId, "corr")).ReturnsAsync("COBERTURA");
+        var allies = SetupAllies(1, criterio: "COBERTURA");
         _rules.Setup(r => r.RankAlliesAsync("COBERTURA", It.IsAny<IReadOnlyCollection<Ally>>(), _tenantId, "cliente", "corr"))
               .ReturnsAsync(new[] { new RankedAlly(allies[0].Id, 1, 1m, Array.Empty<string>()) });
 
@@ -91,13 +87,10 @@ public class GetEligibleAlliesRankingTests
         _rules.VerifyNoOtherCalls();
     }
 
-    // SCRUM-1652: el criterio se pide junto con la lista; si no hay candidatos, su falla no cambia la respuesta.
     [Fact]
-    public async Task WithoutEligibles_ATenantCriterionFailureDoesNotFailTheRequest()
+    public async Task WithoutEligibles_AMissingTenantCriterionDoesNotFailTheRequest()
     {
-        SetupAllies(0);
-        _tenantRules.Setup(t => t.GetCriterioOrdenListadoAsync(_tenantId, "corr"))
-                    .ThrowsAsync(new RulesServiceUnavailableException("sin criterio"));
+        SetupAllies(0, criterio: null);
 
         var result = await Execute();
 
@@ -108,7 +101,7 @@ public class GetEligibleAlliesRankingTests
 
     // SCRUM-1652: 51 elegibles caben en una sola página de Core (máximo 100): una llamada, no dos.
     [Fact]
-    public async Task FiftyOneEligibles_AreReadInASinglePageFromCore()
+    public async Task FiftyOneEligibles_AreReadInASingleCallToCore()
     {
         var allies = SetupAllies(51);
         _rules.Setup(r => r.RankAlliesAsync("CALIFICACION", It.IsAny<IReadOnlyCollection<Ally>>(), _tenantId, "cliente", "corr"))
@@ -117,8 +110,22 @@ public class GetEligibleAlliesRankingTests
         var result = await Execute(pageSize: 50);
 
         Assert.Equal(51, result.TotalCount);
-        _repo.Verify(r => r.GetEligibleAlliesAsync(It.Is<MatchCriteria>(c => c.Page == 1 && c.PageSize == 100)), Times.Once);
-        _repo.Verify(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()), Times.Once);
+        _repo.Verify(r => r.GetEligibleForRequestAsync(_requestId, _tenantId, null, 1, 100, "corr"), Times.Once);
+        _repo.Verify(r => r.GetEligibleForRequestAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string?>(),
+            It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task MoreEligiblesThanOnePage_ReadsTheFollowingPages()
+    {
+        var allies = SetupAllies(130);
+        _rules.Setup(r => r.RankAlliesAsync("CALIFICACION", It.IsAny<IReadOnlyCollection<Ally>>(), _tenantId, "cliente", "corr"))
+              .ReturnsAsync(allies.Select((a, i) => new RankedAlly(a.Id, i + 1, null, Array.Empty<string>())).ToList());
+
+        var result = await Execute();
+
+        Assert.Equal(130, result.TotalCount);
+        _repo.Verify(r => r.GetEligibleForRequestAsync(_requestId, _tenantId, null, 2, 100, "corr"), Times.Once);
     }
 
     [Fact]
@@ -132,11 +139,9 @@ public class GetEligibleAlliesRankingTests
     }
 
     [Fact]
-    public async Task WhenTenantCriterionCannotBeRead_DoesNotCallRules()
+    public async Task WhenTheTenantRuleHasNoCriterion_DoesNotCallRules()
     {
-        SetupAllies(2);
-        _tenantRules.Setup(t => t.GetCriterioOrdenListadoAsync(_tenantId, "corr"))
-                    .ThrowsAsync(new RulesServiceUnavailableException("sin criterio"));
+        SetupAllies(2, criterio: null);
 
         await Assert.ThrowsAsync<RulesServiceUnavailableException>(() => Execute());
         _rules.VerifyNoOtherCalls();
