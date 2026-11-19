@@ -1,27 +1,30 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using ManiDispatch.Application.Interfaces;
 
 namespace ManiDispatch.Application.UseCases;
 
 /// <summary>
-/// Solicitudes asignadas al aliado autenticado (SCRUM-853, criterio T1). El aliado se resuelve con Core
-/// por el JWT reenviado, igual que en la aceptación; la asignación se lee con el contexto del aliado (RLS).
+/// Solicitudes asignadas al aliado autenticado (SCRUM-853 / SCRUM-1660, QAS-20). El aliado y sus solicitudes
+/// asignadas se consultan a Core por HTTP (<see cref="ICoreAssignmentClient.GetOwnOffersAsync"/> filtrando
+/// <c>EsMia == true</c>), de modo que Dispatch (<c>mani_dispatch_svc</c>) no lee directamente la tabla
+/// <c>solicitud</c> del dominio de Core (ADR-0030).
 /// </summary>
 public class GetAllyAssignmentsUseCase
 {
-    private readonly ISolicitudAssignmentRepository _assignmentRepository;
+    private readonly ICoreAssignmentClient _coreAssignmentClient;
     private readonly IAllyRepository _allyRepository;
 
-    public GetAllyAssignmentsUseCase(ISolicitudAssignmentRepository assignmentRepository, IAllyRepository allyRepository)
+    public GetAllyAssignmentsUseCase(ICoreAssignmentClient coreAssignmentClient, IAllyRepository allyRepository)
     {
-        _assignmentRepository = assignmentRepository ?? throw new ArgumentNullException(nameof(assignmentRepository));
+        _coreAssignmentClient = coreAssignmentClient ?? throw new ArgumentNullException(nameof(coreAssignmentClient));
         _allyRepository = allyRepository ?? throw new ArgumentNullException(nameof(allyRepository));
     }
 
     /// <exception cref="UnauthorizedAccessException">La cuenta no tiene perfil de aliado en el tenant.</exception>
-    public async Task<IReadOnlyList<Guid>> ExecuteAsync(Guid tenantId, Guid usuarioId)
+    public async Task<IReadOnlyList<Guid>> ExecuteAsync(Guid tenantId, Guid usuarioId, string? correlationId = null)
     {
         var allyProfile = await _allyRepository.GetAllyProfileAsync(usuarioId, tenantId);
         if (allyProfile == null)
@@ -29,6 +32,7 @@ public class GetAllyAssignmentsUseCase
             throw new UnauthorizedAccessException("MANI-SOL-403V: no existe un perfil de aliado asociado a la cuenta en este tenant.");
         }
 
-        return await _assignmentRepository.GetAssignedRequestIdsAsync(tenantId, usuarioId, allyProfile.Id);
+        var offers = await _coreAssignmentClient.GetOwnOffersAsync(tenantId, correlationId);
+        return offers.Where(o => o.EsMia).Select(o => o.Id).ToList();
     }
 }

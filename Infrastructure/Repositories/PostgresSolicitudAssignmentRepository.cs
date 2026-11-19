@@ -76,21 +76,6 @@ public class PostgresSolicitudAssignmentRepository : ISolicitudAssignmentReposit
             (IReadOnlyList<Guid>)(await connection.QueryAsync<Guid>(sql, new { TenantId = tenantId, RequestId = requestId }, tx)).ToList());
     }
 
-    public Task<IReadOnlyList<Guid>> GetAssignedRequestIdsAsync(Guid tenantId, Guid usuarioId, Guid aliadoId)
-    {
-        // Asignada = Core registró al aliado en aliado_id. Cualquier estado posterior a la asignación cuenta, salvo
-        // la cancelación. Core usa los ids como conjunto, así que no se ordenan.
-        const string sql = @"
-            SELECT id
-            FROM solicitud
-            WHERE tenant_id = @TenantId
-              AND aliado_id = @AliadoId
-              AND estado <> 'CANCELADA';";
-
-        return WithTenantContextAsync(tenantId, usuarioId, RolAliado, "consultar las asignaciones del aliado", async (connection, tx) =>
-            (IReadOnlyList<Guid>)(await connection.QueryAsync<Guid>(sql, new { TenantId = tenantId, AliadoId = aliadoId }, tx)).ToList());
-    }
-
     private async Task<T> WithTenantContextAsync<T>(
         Guid tenantId,
         Guid usuarioId,
