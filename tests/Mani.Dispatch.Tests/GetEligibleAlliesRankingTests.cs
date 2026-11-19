@@ -89,7 +89,36 @@ public class GetEligibleAlliesRankingTests
         Assert.Null(result.Ranking);
         Assert.Empty(result.MatchedAllies);
         _rules.VerifyNoOtherCalls();
-        _tenantRules.VerifyNoOtherCalls();
+    }
+
+    // SCRUM-1652: el criterio se pide junto con la lista; si no hay candidatos, su falla no cambia la respuesta.
+    [Fact]
+    public async Task WithoutEligibles_ATenantCriterionFailureDoesNotFailTheRequest()
+    {
+        SetupAllies(0);
+        _tenantRules.Setup(t => t.GetCriterioOrdenListadoAsync(_tenantId, "corr"))
+                    .ThrowsAsync(new RulesServiceUnavailableException("sin criterio"));
+
+        var result = await Execute();
+
+        Assert.Equal(0, result.TotalCount);
+        Assert.Null(result.Ranking);
+        _rules.VerifyNoOtherCalls();
+    }
+
+    // SCRUM-1652: 51 elegibles caben en una sola página de Core (máximo 100): una llamada, no dos.
+    [Fact]
+    public async Task FiftyOneEligibles_AreReadInASinglePageFromCore()
+    {
+        var allies = SetupAllies(51);
+        _rules.Setup(r => r.RankAlliesAsync("CALIFICACION", It.IsAny<IReadOnlyCollection<Ally>>(), _tenantId, "cliente", "corr"))
+              .ReturnsAsync(allies.Select((a, i) => new RankedAlly(a.Id, i + 1, null, Array.Empty<string>())).ToList());
+
+        var result = await Execute(pageSize: 50);
+
+        Assert.Equal(51, result.TotalCount);
+        _repo.Verify(r => r.GetEligibleAlliesAsync(It.Is<MatchCriteria>(c => c.Page == 1 && c.PageSize == 100)), Times.Once);
+        _repo.Verify(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()), Times.Once);
     }
 
     [Fact]

@@ -77,7 +77,7 @@ public class OrchestrateDispatchUseCaseTests
     [Fact]
     public async Task ExecuteAsync_WhenEligibleAlliesSpanSeveralPages_BroadcastsToAllOfThem()
     {
-        // Arrange (SCRUM-1402 C1: 51 elegibles, uno más que la página de 50 que se pide a Core)
+        // Arrange (SCRUM-1402 C1: 101 elegibles, uno más que la página de 100 que se pide a Core (SCRUM-1652))
         var tenantId = Guid.NewGuid();
         var requestId = Guid.NewGuid();
 
@@ -90,7 +90,7 @@ public class OrchestrateDispatchUseCaseTests
             Estado = "PENDIENTE"
         };
 
-        var allies = Enumerable.Range(1, 51)
+        var allies = Enumerable.Range(1, 101)
             .Select(i => new Ally { Id = Guid.NewGuid(), NombreRazonSocial = $"Aliado {i}", Tipo = "PERSONA_NATURAL", EstadoVerificacion = "VERIFICADO" })
             .ToList();
 
@@ -106,17 +106,17 @@ public class OrchestrateDispatchUseCaseTests
         };
 
         // Act
-        var result = await _useCase.ExecuteAsync(request, "corr-orch-51", tenantId);
+        var result = await _useCase.ExecuteAsync(request, "corr-orch-101", tenantId);
 
         // Assert
         Assert.Equal("DISPATCHED", result.Status);
-        Assert.Equal(51, result.CandidatesCount);
+        Assert.Equal(101, result.CandidatesCount);
         Assert.Equal(allies.Select(a => a.Id.ToString()).OrderBy(id => id), result.CandidatesNotified.Select(o => o.AllyId).OrderBy(id => id));
-        Assert.Contains("51 aliados", result.Message);
+        Assert.Contains("101 aliados", result.Message);
 
-        _mockPublisher.Verify(p => p.PublishOfferAsync(It.IsAny<DispatchOffer>()), Times.Exactly(51));
-        _mockRepo.Verify(r => r.GetEligibleAlliesAsync(It.Is<MatchCriteria>(c => c.Page == 1 && c.PageSize == 50)), Times.Once);
-        _mockRepo.Verify(r => r.GetEligibleAlliesAsync(It.Is<MatchCriteria>(c => c.Page == 2 && c.PageSize == 50)), Times.Once);
+        _mockPublisher.Verify(p => p.PublishOfferAsync(It.IsAny<DispatchOffer>()), Times.Exactly(101));
+        _mockRepo.Verify(r => r.GetEligibleAlliesAsync(It.Is<MatchCriteria>(c => c.Page == 1 && c.PageSize == 100)), Times.Once);
+        _mockRepo.Verify(r => r.GetEligibleAlliesAsync(It.Is<MatchCriteria>(c => c.Page == 2 && c.PageSize == 100)), Times.Once);
         _mockRepo.Verify(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()), Times.Exactly(2));
     }
 
@@ -136,7 +136,7 @@ public class OrchestrateDispatchUseCaseTests
             Estado = "PENDIENTE"
         };
 
-        var pagina = Enumerable.Range(1, 50)
+        var pagina = Enumerable.Range(1, 100)
             .Select(i => new Ally { Id = Guid.NewGuid(), NombreRazonSocial = $"Aliado {i}", Tipo = "PERSONA_NATURAL", EstadoVerificacion = "VERIFICADO" })
             .ToList();
 
@@ -144,7 +144,7 @@ public class OrchestrateDispatchUseCaseTests
                  .ReturnsAsync(solicitud);
 
         _mockRepo.Setup(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()))
-                 .ReturnsAsync((pagina, 120));
+                 .ReturnsAsync((pagina, 250));
 
         var request = new OrchestrateRequestDto
         {
@@ -155,8 +155,8 @@ public class OrchestrateDispatchUseCaseTests
         var result = await _useCase.ExecuteAsync(request, "corr-orch-repetida", tenantId);
 
         // Assert
-        Assert.Equal(50, result.CandidatesCount);
-        _mockPublisher.Verify(p => p.PublishOfferAsync(It.IsAny<DispatchOffer>()), Times.Exactly(50));
+        Assert.Equal(100, result.CandidatesCount);
+        _mockPublisher.Verify(p => p.PublishOfferAsync(It.IsAny<DispatchOffer>()), Times.Exactly(100));
         _mockRepo.Verify(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()), Times.Exactly(2));
     }
 
