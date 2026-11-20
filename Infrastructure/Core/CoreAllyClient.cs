@@ -84,6 +84,36 @@ public class CoreAllyClient : IAllyRepository
         return await ReadAsync<SolicitudContext>(response);
     }
 
+    public async Task<EligibleForRequest?> GetEligibleForRequestAsync(
+        Guid requestId, Guid tenantId, string? tipo, int page, int pageSize, string correlationId)
+    {
+        var url = $"{RequireBaseUrl()}/api/v1/allies/eligible/by-request/{requestId}?page={page}&pageSize={pageSize}";
+        if (!string.IsNullOrWhiteSpace(tipo))
+        {
+            url += $"&tipo={Uri.EscapeDataString(tipo)}";
+        }
+
+        using var response = await SendAsync(url, tenantId, correlationId);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+        ThrowIfAccessDenied(response, "los elegibles de la solicitud");
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogError("Core respondió {StatusCode} al consultar los elegibles de la solicitud {RequestId}.", (int)response.StatusCode, requestId);
+            throw new CoreServiceUnavailableException($"Core respondió {(int)response.StatusCode} al consultar los elegibles de la solicitud.");
+        }
+
+        var result = await ReadAsync<EligibleForRequest>(response);
+        if (result == null || result.Solicitud.Id != requestId)
+        {
+            // Una respuesta sin la solicitud pedida no es un listado válido: no se arma uno con datos de otra.
+            throw new CoreServiceUnavailableException("Core devolvió los elegibles sin la solicitud pedida.");
+        }
+        return result;
+    }
+
     public async Task<AllyProfile?> GetAllyProfileAsync(Guid usuarioId, Guid tenantId)
     {
         var url = $"{RequireBaseUrl()}/api/v1/allies/me";

@@ -16,18 +16,15 @@ public class GetEligibleAlliesUseCase
 
     private readonly IAllyRepository _allyRepository;
     private readonly ISolicitudAssignmentRepository? _assignmentRepository;
-    private readonly ITenantRulesReader? _tenantRulesReader;
     private readonly IRulesClient? _rulesClient;
 
     public GetEligibleAlliesUseCase(
         IAllyRepository allyRepository,
         ISolicitudAssignmentRepository? assignmentRepository = null,
-        ITenantRulesReader? tenantRulesReader = null,
         IRulesClient? rulesClient = null)
     {
         _allyRepository = allyRepository ?? throw new ArgumentNullException(nameof(allyRepository));
         _assignmentRepository = assignmentRepository;
-        _tenantRulesReader = tenantRulesReader;
         _rulesClient = rulesClient;
     }
 
@@ -48,27 +45,33 @@ public class GetEligibleAlliesUseCase
         int? pageSize,
         string correlationId)
     {
-        var solicitud = await _allyRepository.GetSolicitudContextAsync(requestId, tenantId);
-        if (solicitud == null)
+        // SCRUM-1652: en QA cada viaje a la base cuesta ~110 ms. Core entrega en una sola lectura el contexto, los
+        // elegibles y el criterio de orden del tenant (antes eran tres llamadas en serie). Los rechazos son de Dispatch
+        // (ADR-0030): se leen a la vez y se descuentan aquí, en lugar de esperar por ellos para pedir la lista.
+        var tipoNormalizado = NormalizeTipo(tipo);
+        var rechazadosTask = _assignmentRepository != null
+            ? _assignmentRepository.GetRejectedAllyIdsAsync(requestId, tenantId, usuarioId, role)
+            : Task.FromResult<IReadOnlyList<Guid>>(Array.Empty<Guid>());
+
+        EligibleForRequest lectura;
+        List<Ally> candidatos;
+        try
         {
-            throw new KeyNotFoundException($"Solicitud con ID '{requestId}' no encontrada para el tenant autenticado.");
+            // La solicitud se revisa primero: una que no existe sigue siendo 404 aunque falle la lectura de rechazos.
+            lectura = await _allyRepository.GetEligibleForRequestAsync(
+                    requestId, tenantId, tipoNormalizado, 1, EligibleAlliesPaging.PageSize, correlationId)
+                ?? throw new KeyNotFoundException($"Solicitud con ID '{requestId}' no encontrada para el tenant autenticado.");
+            candidatos = await ReadRemainingPagesAsync(lectura, requestId, tenantId, tipoNormalizado, correlationId);
+        }
+        catch
+        {
+            Discard(rechazadosTask);
+            throw;
         }
 
-        var tipoNormalizado = NormalizeTipo(tipo);
-        IReadOnlyCollection<Guid> excludeAllyIds = _assignmentRepository != null
-            ? await _assignmentRepository.GetRejectedAllyIdsAsync(requestId, tenantId, usuarioId, role)
-            : Array.Empty<Guid>();
-
-        var allies = await EligibleAlliesPaging.GetAllAsync(_allyRepository, new MatchCriteria
-        {
-            TenantId = tenantId,
-            RequestId = requestId,
-            ZonaId = solicitud.ZonaId,
-            CategoriaId = solicitud.CategoriaId,
-            Tipo = tipoNormalizado,
-            CorrelationId = correlationId,
-            ExcludeAllyIds = excludeAllyIds
-        });
+        var rechazados = (await rechazadosTask).ToHashSet();
+        var allies = candidatos.Where(a => !rechazados.Contains(a.Id)).ToList();
+        var solicitud = lectura.Solicitud;
 
         int resolvedPage = ResolvePage(page);
         int resolvedPageSize = ResolvePageSize(pageSize);
@@ -88,15 +91,21 @@ public class GetEligibleAlliesUseCase
         };
         if (allies.Count == 0)
         {
+            // Sin candidatos no hay nada que ordenar: el criterio no se usa y su ausencia no cambia la respuesta.
             return response;
         }
 
-        if (_tenantRulesReader == null || _rulesClient == null)
+        if (_rulesClient == null)
         {
             throw new RulesServiceUnavailableException("El cliente de Rules no está configurado.");
         }
 
-        var criterio = await _tenantRulesReader.GetCriterioOrdenListadoAsync(tenantId, correlationId);
+        var criterio = lectura.CriterioOrdenListado;
+        if (string.IsNullOrWhiteSpace(criterio))
+        {
+            throw new RulesServiceUnavailableException("Las reglas del tenant no traen el criterio de orden.");
+        }
+
         var ranking = await _rulesClient.RankAlliesAsync(criterio, allies, tenantId, role, correlationId);
 
         response.Ranking = new RankingInfoDto { Criterio = criterio };
@@ -106,6 +115,41 @@ public class GetEligibleAlliesUseCase
             .ToList();
         return response;
     }
+
+    // Con más elegibles que una página de Core se piden las siguientes. Un aliado repetido entre páginas cuenta una
+    // vez, y una página sin aliados nuevos termina el recorrido (mismas reglas que EligibleAlliesPaging).
+    private async Task<List<Ally>> ReadRemainingPagesAsync(
+        EligibleForRequest primera, Guid requestId, Guid tenantId, string? tipo, string correlationId)
+    {
+        var vistos = new HashSet<Guid>();
+        var todos = primera.Allies.Where(a => vistos.Add(a.Id)).ToList();
+        var ultimaPagina = primera.Allies.Count;
+        int page = 2;
+        while (ultimaPagina >= EligibleAlliesPaging.PageSize && todos.Count < primera.TotalCount)
+        {
+            var siguiente = await _allyRepository.GetEligibleForRequestAsync(
+                requestId, tenantId, tipo, page++, EligibleAlliesPaging.PageSize, correlationId);
+            if (siguiente == null)
+            {
+                break;
+            }
+
+            var nuevos = siguiente.Allies.Where(a => vistos.Add(a.Id)).ToList();
+            if (nuevos.Count == 0)
+            {
+                break;
+            }
+
+            todos.AddRange(nuevos);
+            ultimaPagina = siguiente.Allies.Count;
+        }
+
+        return todos;
+    }
+
+    // Una lectura que ya no se usa se observa para que su error, si lo hay, no quede como excepción sin observar.
+    private static void Discard(Task? task) =>
+        task?.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
 
     // Una respuesta de Rules que no cubre exactamente a los candidatos no es un orden válido: no se pierde ni se inventa a nadie.
     private static List<AllyDto> ApplyRanking(List<Ally> allies, IReadOnlyList<RankedAlly> ranking)

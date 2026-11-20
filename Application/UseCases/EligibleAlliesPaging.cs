@@ -9,8 +9,9 @@ namespace ManiDispatch.Application.UseCases;
 
 internal static class EligibleAlliesPaging
 {
-    // Tamaño de página con el que se piden los elegibles a Core (su máximo es 100).
-    public const int PageSize = 50;
+    // Tamaño de página con el que se piden los elegibles a Core: su máximo (MAX_PAGE_SIZE de Core). Cada página es una
+    // llamada HTTP y una transacción en Core; con 50, un caso de 51 elegibles pagaba dos (SCRUM-1652).
+    public const int PageSize = 100;
 
     /// <summary>
     /// Todos los elegibles (SCRUM-1402 C1): Core pagina, así que se recorren todas las páginas. Core ordena por id; un
