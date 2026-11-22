@@ -34,20 +34,15 @@ builder.Services.AddCors(options =>
 // Inyección de dependencias para Arquitectura Limpia
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddTransient<ForwardAuthorizationHandler>();
-builder.Services.AddHttpClient<IAllyRepository, CoreAllyClient>(client => client.Timeout = TimeSpan.FromSeconds(3))
-    .AddHttpMessageHandler<ForwardAuthorizationHandler>();
-builder.Services.AddHttpClient<IDispatchPublisher, CoreDispatchPublisher>(client => client.Timeout = TimeSpan.FromSeconds(3))
-    .AddHttpMessageHandler<ForwardAuthorizationHandler>();
+builder.Services.AddClienteDeCore<IAllyRepository, CoreAllyClient>();
+builder.Services.AddClienteDeCore<IDispatchPublisher, CoreDispatchPublisher>();
 // Decisión 6A (SCRUM-1403): Core registra la asignación; Dispatch le envía el comando con el JWT del aliado.
-builder.Services.AddHttpClient<ICoreAssignmentClient, CoreAssignmentClient>(client => client.Timeout = TimeSpan.FromSeconds(3))
-    .AddHttpMessageHandler<ForwardAuthorizationHandler>();
+builder.Services.AddClienteDeCore<ICoreAssignmentClient, CoreAssignmentClient>();
 // Orden de los elegibles (SCRUM-1462): criterio del tenant en Core y evaluación en Rules, sin orden local si fallan.
-builder.Services.AddHttpClient<ITenantRulesReader, CoreTenantRulesClient>(client => client.Timeout = TimeSpan.FromSeconds(3))
-    .AddHttpMessageHandler<ForwardAuthorizationHandler>();
+builder.Services.AddClienteDeCore<ITenantRulesReader, CoreTenantRulesClient>();
 builder.Services.AddHttpClient<IRulesClient, RulesClient>(client => client.Timeout = TimeSpan.FromSeconds(3));
 // Contexto efectivo del administrador de plataforma (SCRUM-901): lo resuelve Core.
-builder.Services.AddHttpClient<ICoreContextoClient, CoreContextoClient>(client => client.Timeout = TimeSpan.FromSeconds(3))
-    .AddHttpMessageHandler<ForwardAuthorizationHandler>();
+builder.Services.AddClienteDeCore<ICoreContextoClient, CoreContextoClient>();
 builder.Services.AddScoped<ISolicitudAssignmentRepository, PostgresSolicitudAssignmentRepository>();
 // SCRUM-1468: fuera de Development, Dispatch no arranca si su conexión usa un rol que salta RLS.
 builder.Services.AddHostedService<VerificacionRolServicio>();
