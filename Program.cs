@@ -1,3 +1,4 @@
+using Prometheus;
 using System.Text.Json;
 using ManiDispatch.Application.Interfaces;
 using ManiDispatch.Application.UseCases;
@@ -68,10 +69,17 @@ app.Use(async (context, next) =>
     await next();
 });
 
+// SCRUM-1714: duración y conteo de peticiones HTTP por ruta, método y código.
+app.UseHttpMetrics();
+
 // SCRUM-901: sesión efectiva (tenant elegido / actuar como) antes de los controladores.
 app.UseMiddleware<ContextoPlataformaMiddleware>();
 
 app.MapControllers();
+
+// SCRUM-1714: métricas en formato Prometheus. El Gateway solo deja leerlas desde
+// la red interna, con la misma regla que aplica a /metrics de Core.
+app.MapMetrics();
 
 app.Run();
 
