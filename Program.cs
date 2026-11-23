@@ -50,26 +50,21 @@ builder.Services.AddSingleton(rulesCircuitBreaker);
 
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddTransient<ForwardAuthorizationHandler>();
-builder.Services.AddHttpClient<IAllyRepository, CoreAllyClient>(client => client.Timeout = TimeSpan.FromSeconds(3))
-    .AddHttpMessageHandler<ForwardAuthorizationHandler>()
+builder.Services.AddClienteDeCore<IAllyRepository, CoreAllyClient>()
     .AddHttpMessageHandler(() => new CircuitBreakerDelegatingHandler(coreCircuitBreaker));
-builder.Services.AddHttpClient<IDispatchPublisher, CoreDispatchPublisher>(client => client.Timeout = TimeSpan.FromSeconds(3))
-    .AddHttpMessageHandler<ForwardAuthorizationHandler>()
+builder.Services.AddClienteDeCore<IDispatchPublisher, CoreDispatchPublisher>()
     .AddHttpMessageHandler(() => new CircuitBreakerDelegatingHandler(coreCircuitBreaker));
 // Decisión 6A (SCRUM-1403): Core registra la asignación; Dispatch le envía el comando con el JWT del aliado.
-builder.Services.AddHttpClient<ICoreAssignmentClient, CoreAssignmentClient>(client => client.Timeout = TimeSpan.FromSeconds(3))
-    .AddHttpMessageHandler<ForwardAuthorizationHandler>()
+builder.Services.AddClienteDeCore<ICoreAssignmentClient, CoreAssignmentClient>()
     .AddHttpMessageHandler(() => new CircuitBreakerDelegatingHandler(coreCircuitBreaker));
 // Orden de los elegibles (SCRUM-1462): criterio del tenant en Core y evaluación en Rules, sin orden local si fallan.
-builder.Services.AddHttpClient<ITenantRulesReader, CoreTenantRulesClient>(client => client.Timeout = TimeSpan.FromSeconds(3))
-    .AddHttpMessageHandler<ForwardAuthorizationHandler>()
+builder.Services.AddClienteDeCore<ITenantRulesReader, CoreTenantRulesClient>()
     .AddHttpMessageHandler(() => new CircuitBreakerDelegatingHandler(coreCircuitBreaker));
 builder.Services.AddHttpClient<IRulesClient, RulesClient>(client => client.Timeout = TimeSpan.FromSeconds(3))
     .AddHttpMessageHandler<ForwardAuthorizationHandler>()
     .AddHttpMessageHandler(() => new CircuitBreakerDelegatingHandler(rulesCircuitBreaker));
 // Contexto efectivo del administrador de plataforma (SCRUM-901): lo resuelve Core.
-builder.Services.AddHttpClient<ICoreContextoClient, CoreContextoClient>(client => client.Timeout = TimeSpan.FromSeconds(3))
-    .AddHttpMessageHandler<ForwardAuthorizationHandler>()
+builder.Services.AddClienteDeCore<ICoreContextoClient, CoreContextoClient>()
     .AddHttpMessageHandler(() => new CircuitBreakerDelegatingHandler(coreCircuitBreaker));
 builder.Services.AddScoped<ISolicitudAssignmentRepository, PostgresSolicitudAssignmentRepository>();
 // SCRUM-1468: fuera de Development, Dispatch no arranca si su conexión usa un rol que salta RLS.

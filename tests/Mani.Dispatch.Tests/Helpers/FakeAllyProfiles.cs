@@ -32,6 +32,9 @@ public class FakeAllyProfiles : IAllyRepository
     public Task<(IEnumerable<Ally> Allies, int TotalCount)> GetEligibleAlliesAsync(MatchCriteria criteria) =>
         throw new NotSupportedException();
 
+    public Task<EligibleForRequest?> GetEligibleForRequestAsync(Guid requestId, Guid tenantId, string? tipo, int page, int pageSize, string correlationId) =>
+        throw new NotSupportedException();
+
     public Task<SolicitudContext?> GetSolicitudContextAsync(Guid requestId, Guid tenantId)
     {
         if (_solicitudes.TryGetValue(requestId, out var solicitud) && solicitud.TenantId == tenantId)

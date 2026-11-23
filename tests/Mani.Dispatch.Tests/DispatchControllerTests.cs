@@ -142,24 +142,10 @@ public class DispatchControllerTests
     {
         _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
 
-        var requestId = Guid.NewGuid();
         var dbZonaId = Guid.NewGuid();
         var dbCategoriaId = Guid.NewGuid();
 
-        var solicitud = new SolicitudContext
-        {
-            Id = requestId,
-            TenantId = _testTenantId,
-            ZonaId = dbZonaId,
-            CategoriaId = dbCategoriaId,
-            Estado = "PENDIENTE"
-        };
-
-        _mockRepo.Setup(r => r.GetSolicitudContextAsync(requestId, _testTenantId))
-                 .ReturnsAsync(solicitud);
-
-        _mockRepo.Setup(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()))
-                 .ReturnsAsync((new List<Ally>(), 0));
+        var requestId = SetupEligibleForRequest(new List<Ally>(), zonaId: dbZonaId, categoriaId: dbCategoriaId);
 
         var actionResult = await _controller.GetEligibleAlliesForRequest(
             requestId.ToString(),
@@ -177,9 +163,7 @@ public class DispatchControllerTests
     public async Task GetEligibleAlliesForRequest_WhenRulesCannotOrder_Returns503WithoutTheList()
     {
         _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
-        var requestId = SetupSolicitud();
-        _mockRepo.Setup(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()))
-                 .ReturnsAsync((new List<Ally> { new() { Id = Guid.NewGuid() } }, 1));
+        var requestId = SetupEligibleForRequest(new List<Ally> { new() { Id = Guid.NewGuid() } });
 
         var actionResult = await _controller.GetEligibleAlliesForRequest(requestId.ToString(), page: 1, pageSize: 10);
 
@@ -192,9 +176,7 @@ public class DispatchControllerTests
     public async Task GetEligibleAlliesForRequest_FiltersByTipo_WhenTipoQueryParamIsSent()
     {
         _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
-        var requestId = SetupSolicitud();
-        _mockRepo.Setup(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()))
-                 .ReturnsAsync((new List<Ally>(), 0));
+        var requestId = SetupEligibleForRequest(new List<Ally>());
 
         var actionResult = await _controller.GetEligibleAlliesForRequest(
             requestId.ToString(),
@@ -205,15 +187,15 @@ public class DispatchControllerTests
         var okResult = Assert.IsType<OkObjectResult>(actionResult);
         var response = Assert.IsType<MatchResponseDto>(okResult.Value);
         Assert.Equal("PERSONA_JURIDICA", response.Tipo);
-        _mockRepo.Verify(r => r.GetEligibleAlliesAsync(It.Is<MatchCriteria>(c =>
-            c.Tipo == "PERSONA_JURIDICA" && c.TenantId == _testTenantId)), Times.Once);
+        _mockRepo.Verify(r => r.GetEligibleForRequestAsync(requestId, _testTenantId, "PERSONA_JURIDICA",
+            It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>()), Times.Once);
     }
 
     [Fact]
     public async Task GetEligibleAlliesForRequest_WithInvalidTipo_Returns400BadRequest()
     {
         _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
-        var requestId = SetupSolicitud();
+        var requestId = SetupEligibleForRequest(new List<Ally>());
 
         var actionResult = await _controller.GetEligibleAlliesForRequest(
             requestId.ToString(),
@@ -222,7 +204,8 @@ public class DispatchControllerTests
             tipo: "EMPRESA");
 
         Assert.IsType<BadRequestObjectResult>(actionResult);
-        _mockRepo.Verify(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()), Times.Never);
+        _mockRepo.Verify(r => r.GetEligibleForRequestAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string?>(),
+            It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>()), Times.Never);
     }
 
     [Fact]
@@ -231,8 +214,9 @@ public class DispatchControllerTests
         _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
 
         var requestId = Guid.NewGuid();
-        _mockRepo.Setup(r => r.GetSolicitudContextAsync(requestId, _testTenantId))
-                 .ReturnsAsync((SolicitudContext?)null);
+        _mockRepo.Setup(r => r.GetEligibleForRequestAsync(requestId, _testTenantId, It.IsAny<string?>(),
+                     It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>()))
+                 .ReturnsAsync((EligibleForRequest?)null);
 
         var actionResult = await _controller.GetEligibleAlliesForRequest(
             requestId.ToString(),
@@ -713,7 +697,8 @@ public class DispatchControllerTests
     {
         _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
         var requestId = Guid.NewGuid();
-        _mockRepo.Setup(r => r.GetSolicitudContextAsync(requestId, _testTenantId))
+        _mockRepo.Setup(r => r.GetEligibleForRequestAsync(requestId, _testTenantId, It.IsAny<string?>(),
+                     It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>()))
                  .ThrowsAsync(new CoreServiceUnavailableException("Core no respondió."));
 
         var result = await _controller.GetEligibleAlliesForRequest(requestId.ToString(), 1, 10);
@@ -723,11 +708,13 @@ public class DispatchControllerTests
     }
 
     [Fact]
-    public async Task GetEligibleAlliesForRequest_WhenCoreIsUnavailableListingAllies_Returns503()
+    public async Task GetEligibleAlliesForRequest_WhenCoreIsUnavailableReadingTheNextPage_Returns503()
     {
         _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
-        var requestId = SetupSolicitud();
-        _mockRepo.Setup(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()))
+        var paginaLlena = Enumerable.Range(0, 100).Select(_ => new Ally { Id = Guid.NewGuid() }).ToList();
+        var requestId = SetupEligibleForRequest(paginaLlena, totalCount: 150);
+        _mockRepo.Setup(r => r.GetEligibleForRequestAsync(requestId, _testTenantId, It.IsAny<string?>(),
+                     2, It.IsAny<int>(), It.IsAny<string>()))
                  .ThrowsAsync(new CoreServiceUnavailableException("Core no respondió."));
 
         var result = await _controller.GetEligibleAlliesForRequest(requestId.ToString(), 1, 10);
@@ -752,6 +739,26 @@ public class DispatchControllerTests
     }
 
     // --- Decisión 6A, rechazos y códigos (SCRUM-1402..1405) ---
+
+    // SCRUM-1652: Core entrega contexto, elegibles y criterio en una sola lectura (primera página).
+    private Guid SetupEligibleForRequest(List<Ally> allies, int? totalCount = null, Guid? zonaId = null,
+        Guid? categoriaId = null, string? criterio = "CALIFICACION")
+    {
+        var requestId = Guid.NewGuid();
+        _mockRepo.Setup(r => r.GetEligibleForRequestAsync(requestId, _testTenantId, It.IsAny<string?>(),
+                     1, It.IsAny<int>(), It.IsAny<string>()))
+                 .ReturnsAsync(new EligibleForRequest
+                 {
+                     Solicitud = new SolicitudContext
+                     {
+                         Id = requestId, ZonaId = zonaId ?? Guid.NewGuid(), CategoriaId = categoriaId ?? Guid.NewGuid(), Estado = "PENDIENTE"
+                     },
+                     CriterioOrdenListado = criterio,
+                     Allies = allies,
+                     TotalCount = totalCount ?? allies.Count
+                 });
+        return requestId;
+    }
 
     private Guid SetupSolicitud(string estado = "PENDIENTE")
     {
@@ -1008,16 +1015,17 @@ public class DispatchControllerTests
     public async Task GetEligibleAlliesForRequest_ExcludesTheAlliesThatRejected_ReadingWithTheClientContext()
     {
         _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
-        var requestId = SetupSolicitud();
         var rechazo = Guid.NewGuid();
+        // SCRUM-1652: Core devuelve los elegibles sin descontar rechazos (son de Dispatch, ADR-0030); Dispatch los quita.
+        var requestId = SetupEligibleForRequest(new List<Ally> { new() { Id = rechazo } });
         await _assignmentRepo.RejectRequestAsync(requestId, _testTenantId, Guid.NewGuid(), rechazo, "SIN_DISPONIBILIDAD", null);
-        _mockRepo.Setup(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>())).ReturnsAsync((new List<Ally>(), 0));
 
         var result = await _controller.GetEligibleAlliesForRequest(requestId.ToString(), 1, 10);
 
-        Assert.IsType<OkObjectResult>(result);
-        _mockRepo.Verify(r => r.GetEligibleAlliesAsync(It.Is<MatchCriteria>(c =>
-            c.ExcludeAllyIds.Contains(rechazo) && c.CorrelationId == "test-corr-id")), Times.Once);
+        var response = Assert.IsType<MatchResponseDto>(Assert.IsType<OkObjectResult>(result).Value);
+        Assert.Equal(0, response.TotalCount);
+        Assert.Empty(response.MatchedAllies);
+        _mockRepo.Verify(r => r.GetEligibleForRequestAsync(requestId, _testTenantId, null, 1, 100, "test-corr-id"), Times.Once);
         Assert.Contains((_clientUserId, "cliente"), _assignmentRepo.Contexts);
     }
 
@@ -1031,7 +1039,8 @@ public class DispatchControllerTests
 
         Assert.Equal(403, Assert.IsType<ObjectResult>(result).StatusCode);
         Assert.Equal("MANI-DSP-403", Body(result).GetProperty("code").GetString());
-        _mockRepo.Verify(r => r.GetSolicitudContextAsync(It.IsAny<Guid>(), It.IsAny<Guid>()), Times.Never);
+        _mockRepo.Verify(r => r.GetEligibleForRequestAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string?>(),
+            It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>()), Times.Never);
     }
 
     [Fact]
@@ -1039,7 +1048,8 @@ public class DispatchControllerTests
     {
         _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
         var requestId = Guid.NewGuid();
-        _mockRepo.Setup(r => r.GetSolicitudContextAsync(requestId, _testTenantId))
+        _mockRepo.Setup(r => r.GetEligibleForRequestAsync(requestId, _testTenantId, It.IsAny<string?>(),
+                     It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>()))
                  .ThrowsAsync(new CoreAccessDeniedException("Core negó el acceso."));
 
         var result = await _controller.GetEligibleAlliesForRequest(requestId.ToString(), 1, 10);

@@ -287,4 +287,82 @@ public class CoreAllyClientTests
 
         await Assert.ThrowsAsync<CoreServiceUnavailableException>(() => client.GetAllyProfileAsync(Guid.NewGuid(), Guid.NewGuid()));
     }
+
+    // --- SCRUM-1652: contexto, elegibles y criterio en una sola llamada ---
+
+    private static string LecturaJson(Guid requestId, Guid allyId, string criterio = "\"COBERTURA\"") =>
+        $"{{\"solicitud\":{{\"id\":\"{requestId}\",\"zonaId\":\"{Guid.NewGuid()}\",\"categoriaId\":\"{Guid.NewGuid()}\",\"estado\":\"PENDIENTE\"}}," +
+        $"\"criterioOrdenListado\":{criterio},\"allies\":[{{\"id\":\"{allyId}\",\"nombreRazonSocial\":\"Ana\",\"tipo\":\"PERSONA_NATURAL\",\"estadoVerificacion\":\"VERIFICADO\",\"zonasCobertura\":2}}]," +
+        "\"totalCount\":1,\"page\":1,\"pageSize\":100}";
+
+    [Fact]
+    public async Task GetEligibleForRequestAsync_CallsTheSingleEndpoint_AndMapsContextCriterionAndAllies()
+    {
+        var requestId = Guid.NewGuid();
+        var tenantId = Guid.NewGuid();
+        var allyId = Guid.NewGuid();
+        var handler = new StubHandler(_ => Json(HttpStatusCode.OK, LecturaJson(requestId, allyId)));
+        var client = CreateClient(handler);
+
+        var lectura = await client.GetEligibleForRequestAsync(requestId, tenantId, "PERSONA_NATURAL", 1, 100, "corr-1");
+
+        Assert.NotNull(lectura);
+        Assert.Equal(requestId, lectura!.Solicitud.Id);
+        Assert.Equal("PENDIENTE", lectura.Solicitud.Estado);
+        Assert.Equal("COBERTURA", lectura.CriterioOrdenListado);
+        Assert.Equal(1, lectura.TotalCount);
+        var ally = Assert.Single(lectura.Allies);
+        Assert.Equal(allyId, ally.Id);
+        var request = handler.LastRequest!;
+        Assert.Equal($"http://core.test/api/v1/allies/eligible/by-request/{requestId}?page=1&pageSize=100&tipo=PERSONA_NATURAL",
+            request.RequestUri!.ToString());
+        Assert.Equal(tenantId.ToString(), request.Headers.GetValues("X-Tenant-Id").Single());
+        Assert.Equal("corr-1", request.Headers.GetValues("X-Correlation-ID").Single());
+    }
+
+    [Fact]
+    public async Task GetEligibleForRequestAsync_WithoutCriterion_KeepsItNull()
+    {
+        var requestId = Guid.NewGuid();
+        var client = CreateClient(new StubHandler(_ => Json(HttpStatusCode.OK, LecturaJson(requestId, Guid.NewGuid(), "null"))));
+
+        var lectura = await client.GetEligibleForRequestAsync(requestId, Guid.NewGuid(), null, 1, 100, "corr");
+
+        Assert.Null(lectura!.CriterioOrdenListado);
+    }
+
+    [Fact]
+    public async Task GetEligibleForRequestAsync_When404_ReturnsNull()
+    {
+        var client = CreateClient(new StubHandler(_ => Json(HttpStatusCode.NotFound, "{\"code\":\"MANI-DSP-404\"}")));
+
+        Assert.Null(await client.GetEligibleForRequestAsync(Guid.NewGuid(), Guid.NewGuid(), null, 1, 100, "corr"));
+    }
+
+    [Fact]
+    public async Task GetEligibleForRequestAsync_When403_IsAccessDenied_NotUnavailable()
+    {
+        var client = CreateClient(new StubHandler(_ => Json(HttpStatusCode.Forbidden, "{\"code\":\"MANI-DSP-403\"}")));
+
+        await Assert.ThrowsAsync<CoreAccessDeniedException>(() =>
+            client.GetEligibleForRequestAsync(Guid.NewGuid(), Guid.NewGuid(), null, 1, 100, "corr"));
+    }
+
+    [Fact]
+    public async Task GetEligibleForRequestAsync_WhenCoreAnswersForAnotherRequest_IsUnavailable()
+    {
+        var client = CreateClient(new StubHandler(_ => Json(HttpStatusCode.OK, LecturaJson(Guid.NewGuid(), Guid.NewGuid()))));
+
+        await Assert.ThrowsAsync<CoreServiceUnavailableException>(() =>
+            client.GetEligibleForRequestAsync(Guid.NewGuid(), Guid.NewGuid(), null, 1, 100, "corr"));
+    }
+
+    [Fact]
+    public async Task GetEligibleForRequestAsync_When5xx_IsUnavailable()
+    {
+        var client = CreateClient(new StubHandler(_ => Json(HttpStatusCode.ServiceUnavailable, "{}")));
+
+        await Assert.ThrowsAsync<CoreServiceUnavailableException>(() =>
+            client.GetEligibleForRequestAsync(Guid.NewGuid(), Guid.NewGuid(), null, 1, 100, "corr"));
+    }
 }
