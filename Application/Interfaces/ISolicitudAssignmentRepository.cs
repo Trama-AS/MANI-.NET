@@ -60,10 +60,4 @@ public interface ISolicitudAssignmentRepository
     /// a Core en <c>excludeAllyIds</c>: Core no lee <c>solicitud_rechazo</c> (T1).
     /// </summary>
     Task<IReadOnlyList<Guid>> GetRejectedAllyIdsAsync(Guid requestId, Guid tenantId, Guid usuarioId, string role);
-
-    /// <summary>
-    /// Solicitudes del tenant asignadas al aliado y no canceladas (SCRUM-853). Core la consulta por HTTP para saber
-    /// si el aliado puede leer las reglas del sitio.
-    /// </summary>
-    Task<IReadOnlyList<Guid>> GetAssignedRequestIdsAsync(Guid tenantId, Guid usuarioId, Guid aliadoId);
 }

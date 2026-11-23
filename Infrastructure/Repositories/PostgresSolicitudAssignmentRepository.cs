@@ -74,20 +74,6 @@ public class PostgresSolicitudAssignmentRepository : ISolicitudAssignmentReposit
         return QueryIdsInTenantContextAsync(tenantId, usuarioId, role, "consultar los rechazos de la solicitud", sql, tenantId, requestId);
     }
 
-    public Task<IReadOnlyList<Guid>> GetAssignedRequestIdsAsync(Guid tenantId, Guid usuarioId, Guid aliadoId)
-    {
-        // Asignada = Core registró al aliado en aliado_id. Cualquier estado posterior a la asignación cuenta, salvo
-        // la cancelación. Core usa los ids como conjunto, así que no se ordenan.
-        const string sql = @"
-            SELECT id
-            FROM solicitud
-            WHERE tenant_id = $1
-              AND aliado_id = $2
-              AND estado <> 'CANCELADA';";
-
-        return QueryIdsInTenantContextAsync(tenantId, usuarioId, RolAliado, "consultar las asignaciones del aliado", sql, tenantId, aliadoId);
-    }
-
     /// <summary>
     /// Lectura de una lista de ids en un solo viaje a la base (SCRUM-1652): <c>app.set_context</c> y la consulta van en
     /// el mismo lote. PostgreSQL ejecuta un lote sin BEGIN explícito como una transacción implícita que termina con el
