@@ -1,0 +1,89 @@
+name: Promote staging to PROD (.NET Dispatch)
+
+# SCRUM-1723 / QAS-24: PROD corre exactamente la imagen que QA probó.
+# Este workflow no construye nada. Lee el digest que tiene hoy :staging (o el
+# que se le pase) y le pone la etiqueta :latest a ese mismo manifiesto en GHCR.
+# El merge a main ya no reconstruye la imagen (ver docker-publish.yml).
+#
+# Uso: Actions > "Promote staging to PROD" > Run workflow (rama main).
+# Rollback: ejecutarlo con el digest anterior, que queda en el resumen de cada
+# ejecución.
+
+on:
+  workflow_dispatch:
+    inputs:
+      digest:
+        description: 'Digest a promover (sha256:...). Vacío = el que tiene :staging ahora.'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: promote-latest
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGES: "mani-dotnet mani-net"
+
+jobs:
+  promote:
+    name: Retag staging digest as latest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry (GHCR)
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote the same digest to latest
+        env:
+          OWNER: ${{ github.repository_owner }}
+          INPUT_DIGEST: ${{ inputs.digest }}
+        run: |
+          set -euo pipefail
+          owner=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
+          digest_of() {
+            docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' | jq -r '.digest'
+          }
+
+          {
+            echo "### Promoción staging → latest"
+            echo
+            echo "| Imagen | :latest anterior | :latest promovido |"
+            echo "|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          for image in $IMAGES; do
+            ref="$REGISTRY/$owner/$image"
+            if [ -n "$INPUT_DIGEST" ]; then
+              digest="$INPUT_DIGEST"
+            else
+              digest=$(digest_of "$ref:staging")
+            fi
+            if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::Digest inválido para $ref: '$digest'"
+              exit 1
+            fi
+
+            previous=$(digest_of "$ref:latest" 2>/dev/null || echo "ninguno")
+
+            docker buildx imagetools create --tag "$ref:latest" "$ref@$digest"
+
+            promoted=$(digest_of "$ref:latest")
+            if [ "$promoted" != "$digest" ]; then
+              echo "::error::$ref:latest quedó en $promoted y se esperaba $digest"
+              exit 1
+            fi
+
+            echo "Promovido $ref:latest -> $digest (antes: $previous)"
+            echo "| \`$ref\` | \`$previous\` | \`$digest\` |" >> "$GITHUB_STEP_SUMMARY"
+          done
