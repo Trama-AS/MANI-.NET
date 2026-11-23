@@ -52,11 +52,4 @@ public class InMemorySolicitudAssignmentRepository : ISolicitudAssignmentReposit
         IReadOnlyList<Guid> ids = _rejections.Keys.Where(k => k.SolicitudId == requestId).Select(k => k.AliadoId).ToList();
         return Task.FromResult(ids);
     }
-
-    public Task<IReadOnlyList<Guid>> GetAssignedRequestIdsAsync(Guid tenantId, Guid usuarioId, Guid aliadoId)
-    {
-        Contexts.Enqueue((usuarioId, "aliado"));
-        IReadOnlyList<Guid> ids = _assignments.Where(a => a.Value == aliadoId).Select(a => a.Key).ToList();
-        return Task.FromResult(ids);
-    }
 }
