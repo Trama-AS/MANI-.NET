@@ -78,4 +78,16 @@ public class ForwardAuthorizationHandlerTests
 
         Assert.Equal("explicito", capture.Seen!.Headers.Authorization!.Parameter);
     }
+
+    [Fact]
+    public async Task ForwardsTheIncomingCorrelationIdWhenNotAlreadyPresent()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Headers["X-Correlation-ID"] = "corr-traza-01";
+        var (client, capture) = Build(context);
+
+        await client.GetAsync("http://core.test/x");
+
+        Assert.Equal("corr-traza-01", Assert.Single(capture.Seen!.Headers.GetValues("X-Correlation-ID")));
+    }
 }

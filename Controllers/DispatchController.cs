@@ -104,6 +104,10 @@ public class DispatchController : ControllerBase
                 timestamp = DateTime.UtcNow.ToString("o")
             });
         }
+        catch (CoreAccessDeniedException ex)
+        {
+            return CoreAccessDenied(ex, correlationId);
+        }
         catch (CoreServiceUnavailableException)
         {
             return CoreUnavailable(correlationId);
