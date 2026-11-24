@@ -693,6 +693,22 @@ public class DispatchControllerTests
     }
 
     [Fact]
+    public async Task MatchProfessionals_WhenCoreDeniesAccess_Returns403()
+    {
+        _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
+        _mockRepo.Setup(r => r.GetEligibleAlliesAsync(It.IsAny<MatchCriteria>()))
+                 .ThrowsAsync(new CoreAccessDeniedException("Core negó el acceso."));
+
+        var result = await _controller.MatchProfessionals(new MatchRequestDto
+        {
+            ZonaId = Guid.NewGuid().ToString(),
+            CategoriaId = Guid.NewGuid().ToString()
+        });
+
+        Assert.Equal(403, Assert.IsType<ObjectResult>(result).StatusCode);
+    }
+
+    [Fact]
     public async Task GetEligibleAlliesForRequest_WhenCoreIsUnavailableResolvingSolicitud_Returns503()
     {
         _controller.HttpContext.Request.Headers.Authorization = $"Bearer {_validJwtToken}";
