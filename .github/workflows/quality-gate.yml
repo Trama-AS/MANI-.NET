@@ -69,6 +69,57 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+      # Prueba de contrato (QAS-23, SCRUM-1724): Dispatch, con
+      # Core en memoria, contra docs/openapi/dispatch.yaml del Gateway.
+      # Solo hacia develop: en release y main el contrato de develop puede ir
+      # delante del código que se promueve, que ya pasó por aquí.
+      - name: Contrato y verificador (MANI-APIGateway)
+        if: github.event_name == 'push' || github.base_ref == 'develop'
+        uses: actions/checkout@v4
+        with:
+          repository: Trama-AS/MANI-APIGateway
+          ref: develop
+          path: .mani-contrato
+
+      - name: Core (MANI-Node)
+        if: github.event_name == 'push' || github.base_ref == 'develop'
+        uses: actions/checkout@v4
+        with:
+          repository: Trama-AS/MANI-Node
+          ref: develop
+          path: .mani-core
+
+      - name: Configurar Node.js (verificador de contrato)
+        if: github.event_name == 'push' || github.base_ref == 'develop'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # El secreto de prueba se genera en cada corrida: firma los JWT de las sondas.
+      - name: Preparar el verificador de contrato
+        if: github.event_name == 'push' || github.base_ref == 'develop'
+        run: |
+          npm ci --prefix .mani-core --omit=dev --ignore-scripts
+          npm ci --prefix .mani-contrato --ignore-scripts
+          echo "SUPABASE_JWT_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+
+      - name: Contrato de Dispatch
+        if: github.event_name == 'push' || github.base_ref == 'develop'
+        run: |
+          esperar() {
+            curl -sf --retry 60 --retry-delay 1 --retry-all-errors "$1" > /dev/null
+          }
+          (cd .mani-core && NODE_ENV=test PORT=3000 exec node src/server.js) > core.log 2>&1 &
+          ASPNETCORE_ENVIRONMENT=Development CORE_SERVICE_URL=http://localhost:3000 \
+            dotnet bin/Release/net8.0/Mani.Dispatch.dll > dispatch.log 2>&1 &
+          esperar http://localhost:3000/health
+          esperar http://localhost:5000/api/v1/dispatch/health
+          node .mani-contrato/scripts/verificar_contrato.js --contrato dispatch --url http://localhost:5000/api/v1/dispatch
+
+      - name: Logs de los servicios (si algo falló)
+        if: failure()
+        run: tail -n 50 core.log dispatch.log || true
+
   sonar_quality_gate:
     name: Sonar Quality Gate
     needs: pruebas_cobertura
