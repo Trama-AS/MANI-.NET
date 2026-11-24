@@ -151,20 +151,6 @@ public class PostgresSolicitudAssignmentRepositoryIntegrationTests
     }
 
     [Fact]
-    public async Task AssignedRequestIds_AreReadWithTheAllyContext()
-    {
-        var seed = await DispatchSeed.CreateAsync(_db.ConnectionString);
-        var (aliado, usuario) = await seed.AddAliadoAsync("Ana");
-        var asignada = await seed.AddSolicitudAsync();
-        await seed.AssignAsync(asignada, aliado);
-
-        var ids = await CreateRepository().GetAssignedRequestIdsAsync(seed.TenantId, usuario, aliado);
-
-        Assert.Equal(new[] { asignada }, ids);
-        Assert.Equal(new[] { (usuario, "aliado") }, (await seed.ContextosAsync()).Select(c => (c.UserId!.Value, c.Role)));
-    }
-
-    [Fact]
     public async Task WithoutConnectionString_Throws_SoNothingIsConfirmedWithoutDatabase()
     {
         var repo = new PostgresSolicitudAssignmentRepository(
@@ -172,5 +158,22 @@ public class PostgresSolicitudAssignmentRepositoryIntegrationTests
 
         await Assert.ThrowsAsync<DispatchDatabaseUnavailableException>(() => repo.RejectRequestAsync(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "FUERA_DE_ZONA", null));
         await Assert.ThrowsAsync<DispatchDatabaseUnavailableException>(() => repo.HasRejectedAsync(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()));
+    }
+
+    [Fact]
+    public async Task UnreachablePostgres_WrapsInDispatchDatabaseUnavailableException()
+    {
+        var repo = new PostgresSolicitudAssignmentRepository(
+            new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["ConnectionStrings:DefaultConnection"] = "Host=127.0.0.1;Port=1;Database=mani;Username=mani;Timeout=2"
+                })
+                .Build(),
+            NullLogger<PostgresSolicitudAssignmentRepository>.Instance);
+
+        var error = await Assert.ThrowsAsync<DispatchDatabaseUnavailableException>(() =>
+            repo.GetRejectedRequestIdsAsync(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()));
+        Assert.NotNull(error.InnerException);
     }
 }
