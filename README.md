@@ -140,6 +140,23 @@ El workflow `CI` (`.github/workflows/ci.yml`) ejecuta lo mismo en cada Pull Requ
 
 ---
 
+## 🚢 Despliegue
+
+La imagen se construye una sola vez y se promueve entre ambientes; no se reconstruye para PROD (SCRUM-1723 / QAS-24). El despliegue en las VM lo hace **DevOps**.
+
+| Rama o acción | Workflow | Imagen en GHCR | Ambiente |
+| :--- | :--- | :--- | :--- |
+| Push a `develop` | `docker-publish.yml` | `ghcr.io/trama-as/mani-dotnet` y `mani-net:develop` | Integración |
+| Push a `release` | `docker-publish.yml` | `ghcr.io/trama-as/mani-dotnet` y `mani-net:staging` | **QA** (VM `10.43.100.141`) |
+| `promote-latest.yml` (manual, *Run workflow*) | `promote-latest.yml` | `ghcr.io/trama-as/mani-dotnet` y `mani-net:latest` = **el mismo digest** de `:staging` | **PROD** |
+| Etiqueta `vX.Y.Z` en `main` | `docker-publish.yml` | `ghcr.io/trama-as/mani-dotnet` y `mani-net:X.Y.Z` | Versión publicada |
+
+- Se publican dos nombres de imagen con las mismas etiquetas: `mani-dotnet` y `mani-net`.
+- **Rollback:** se vuelve a ejecutar `promote-latest.yml` con el digest anterior, que queda en el resumen de cada ejecución.
+- **Flujo de ramas** (rama → PR a `develop` → QA → `release` → `main`, nunca PR directo a `main`): [Ramas, flujo y protección](https://github.com/Trama-AS/MANI-docs/blob/main/wiki/03-repositorios/ramas-flujo-y-proteccion.md). **Ambientes:** [Ambientes y promoción](https://github.com/Trama-AS/MANI-docs/blob/main/wiki/04-proceso/ambientes-y-promocion.md).
+
+---
+
 ## 👥 Equipo y Gobernanza
 * **Organización:** [TRAMA · Ingeniería de Software](https://github.com/Trama-AS)
 * **Repositorio Oficial:** [MANI-.NET](https://github.com/Trama-AS/MANI-.NET)
